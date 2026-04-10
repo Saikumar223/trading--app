@@ -2,6 +2,8 @@ import streamlit as st
 import pandas as pd
 import yfinance as yf
 import plotly.express as px
+import requests
+import hashlib
 from ml_model import predict
 from engine import save_trade, update_trades, backtest
 
@@ -9,17 +11,7 @@ st.set_page_config(layout="wide")
 
 st.title("📊 AI Trading Dashboard")
 
-# =========================
-# DARK UI
-# =========================
-st.markdown("""
-<style>
-body {
-    background-color: #0e1117;
-    color: white;
-}
-</style>
-""", unsafe_allow_html=True)
+mode = st.selectbox("Select Mode", ["Intraday", "Swing"])
 
 # =========================
 # REFRESH
@@ -28,12 +20,50 @@ if st.button("🔄 Refresh"):
     st.rerun()
 
 # =========================
+# TELEGRAM ALERT FUNCTION
+# =========================
+def send_telegram_alert(best):
+    try:
+        TOKEN = st.secrets["TOKEN"]
+        CHAT_ID = st.secrets["CHAT_ID"]
+
+        trade_id = hashlib.md5(
+            f"{best['Stock']}{best['Entry']}{best['Target']}".encode()
+        ).hexdigest()
+
+        if "last_trade_id" not in st.session_state:
+            st.session_state.last_trade_id = ""
+
+        if st.session_state.last_trade_id != trade_id:
+
+            msg = f"""
+🚀 BEST TRADE
+
+{best['Stock']}
+Entry: ₹{best['Entry']}
+Target: ₹{best['Target']}
+SL: ₹{best['StopLoss']}
+
+Confidence: {best['Confidence %']}%
+"""
+
+            requests.post(
+                f"https://api.telegram.org/bot{TOKEN}/sendMessage",
+                data={"chat_id": CHAT_ID, "text": msg}
+            )
+
+            st.session_state.last_trade_id = trade_id
+            st.success("📩 Alert Sent")
+
+    except:
+        pass
+
+# =========================
 # MARKET STATUS
 # =========================
 nifty = yf.download("^NSEI", period="1d", interval="5m", progress=False)
 
-if nifty is None or nifty.empty:
-    st.error("Market data not available")
+if nifty.empty:
     st.stop()
 
 close = nifty["Close"]
@@ -41,7 +71,6 @@ if isinstance(close, pd.DataFrame):
     close = close.iloc[:, 0]
 
 if len(close) < 12:
-    st.warning("Not enough market data")
     st.stop()
 
 latest = float(close.iloc[-1])
@@ -50,42 +79,43 @@ change = ((latest - old) / old) * 100
 
 col1, col2, col3 = st.columns(3)
 col1.metric("NIFTY Trend", f"{round(change,2)}%")
-col2.metric("Market Status", "Bullish" if change > 0 else "Weak")
-col3.metric("Strategy", "Active" if change > 0 else "Paused")
+col2.metric("Market", "Bullish" if change > 0 else "Weak")
+col3.metric("Mode", mode)
 
 if change <= 0:
     st.warning("Market weak — avoid trading")
     st.stop()
 
 # =========================
-# RSI FUNCTION
+# RSI + EMA
 # =========================
-def calculate_rsi(series, period=14):
+def calculate_rsi(series):
     delta = series.diff()
-    gain = delta.clip(lower=0).rolling(period).mean()
-    loss = -delta.clip(upper=0).rolling(period).mean()
+    gain = delta.clip(lower=0).rolling(14).mean()
+    loss = -delta.clip(upper=0).rolling(14).mean()
     rs = gain / loss
-    return 100 - (100 / (1 + rs))
+    return 100 - (100/(1+rs))
 
-# =========================
-# STOCK LIST
-# =========================
+def ema(series):
+    return series.ewm(span=20).mean()
+
 stocks = [
-    "RELIANCE.NS","TCS.NS","INFY.NS","HDFCBANK.NS","ICICIBANK.NS",
-    "SBIN.NS","ITC.NS","LT.NS","AXISBANK.NS","KOTAKBANK.NS",
-    "JSWSTEEL.NS","TATASTEEL.NS","WIPRO.NS","TECHM.NS"
+    "RELIANCE.NS","TCS.NS","INFY.NS",
+    "HDFCBANK.NS","ICICIBANK.NS",
+    "SBIN.NS","ITC.NS","LT.NS",
+    "JSWSTEEL.NS","TATASTEEL.NS"
 ]
 
 results = []
 
 # =========================
-# SCAN MARKET
+# SCAN
 # =========================
 for stock in stocks:
     try:
         data = yf.download(stock, period="1d", interval="5m", progress=False)
 
-        if data is None or data.empty or len(data) < 20:
+        if data.empty or len(data) < 20:
             continue
 
         close = data["Close"][stock]
@@ -94,61 +124,47 @@ for stock in stocks:
         latest = float(close.iloc[-1])
         old = float(close.iloc[-12])
 
-        price_change = ((latest - old) / old) * 100
+        price_change = ((latest-old)/old)*100
         vol_ratio = float(volume.iloc[-1]) / float(volume.mean())
         rsi = calculate_rsi(close).iloc[-1]
 
-        if price_change > 0.5 and vol_ratio > 1.5 and 40 < rsi < 70:
+        if latest < ema(close).iloc[-1]:
+            continue
 
-            recent_high = float(close.tail(10).max())
-            recent_low = float(close.tail(10).min())
+        if price_change < 0.7 or vol_ratio < 1.5 or not (40 < rsi < 70):
+            continue
 
-            if latest > recent_high * 0.995:
-                entry_type = "Breakout 🚀"
-                entry = recent_high
-            else:
-                entry_type = "Pullback 🔁"
-                entry = recent_low
+        entry = float(close.tail(10).max())
+        entry_type = "Breakout 🚀"
 
-            target = round(entry * 1.015, 2)
-            stoploss = round(entry * 0.992, 2)
+        if mode == "Swing":
+            target = entry * 1.03
+            stoploss = entry * 0.97
+        else:
+            target = entry * 1.015
+            stoploss = entry * 0.992
 
-            # =========================
-            # ML PREDICTION
-            # =========================
-            confidence = predict(
-                price_change,
-                vol_ratio,
-                rsi,
-                entry_type,
-                "Bullish"
-            )
+        confidence = predict(
+            price_change,
+            vol_ratio,
+            rsi,
+            entry_type,
+            "Bullish"
+        )
 
-            # =========================
-            # FIXED FILTER (IMPORTANT)
-            # =========================
-            if confidence != 50 and confidence < 60:
-                continue
+        # smart filter
+        if confidence != 50 and confidence < 60:
+            continue
 
-            # =========================
-            # DEBUG OUTPUT
-            # =========================
-            st.text(f"{stock} | Δ:{price_change:.2f}% | Vol:{vol_ratio:.2f}x | RSI:{rsi:.2f} | Conf:{confidence}%")
-
-            score = price_change + vol_ratio + (confidence / 10)
-
-            results.append({
-                "Stock": stock,
-                "Entry": round(entry,2),
-                "Target": target,
-                "StopLoss": stoploss,
-                "RSI": round(rsi,2),
-                "Confidence %": confidence,
-                "Type": entry_type,
-                "Score": round(score,2),
-                "Change": price_change,
-                "Volume": vol_ratio
-            })
+        results.append({
+            "Stock": stock,
+            "Entry": round(entry,2),
+            "Target": round(target,2),
+            "StopLoss": round(stoploss,2),
+            "Confidence %": confidence,
+            "Change": price_change,
+            "Volume": vol_ratio
+        })
 
     except:
         continue
@@ -156,15 +172,12 @@ for stock in stocks:
 df = pd.DataFrame(results)
 
 if df.empty:
-    st.warning("No high-quality trades found")
+    st.warning("No trades found")
     st.stop()
 
-df = df.sort_values(by="Score", ascending=False).head(5)
+df = df.sort_values(by="Confidence %", ascending=False).head(3)
 
-# =========================
-# DISPLAY TRADES
-# =========================
-st.subheader("📈 Top AI Trade Setups")
+st.subheader("📈 Trade Setups")
 st.dataframe(df)
 
 # =========================
@@ -173,14 +186,21 @@ st.dataframe(df)
 best = df.iloc[0]
 
 st.subheader("🏆 Best Trade")
+
 st.success(f"""
-Stock: {best['Stock']}
+📌 {best['Stock']}
+
 Entry: ₹{best['Entry']}
 Target: ₹{best['Target']}
 StopLoss: ₹{best['StopLoss']}
+
 Confidence: {best['Confidence %']}%
-Type: {best['Type']}
 """)
+
+# =========================
+# TELEGRAM AUTO ALERT
+# =========================
+send_telegram_alert(best)
 
 # =========================
 # SAVE TRADE
@@ -192,22 +212,34 @@ save_trade(
     best["StopLoss"],
     best["Change"],
     best["Volume"],
-    best["RSI"],
-    best["Type"],
+    50,
+    "Breakout 🚀",
     "Bullish"
 )
 
 # =========================
+# LIVE CHART
+# =========================
+st.subheader("📊 Live Chart")
+
+chart = yf.download(best["Stock"], period="1d", interval="5m")
+
+if not chart.empty:
+    fig = px.line(chart, y="Close", title=best["Stock"])
+    st.plotly_chart(fig, use_container_width=True)
+
+# =========================
 # PERFORMANCE
 # =========================
-st.subheader("📊 Trade Performance")
+st.subheader("📊 Performance")
+
 trades = update_trades()
 
 if not trades.empty:
     st.dataframe(trades)
 
 # =========================
-# PnL GRAPH
+# PNL GRAPH
 # =========================
 st.subheader("📈 PnL Trend")
 
