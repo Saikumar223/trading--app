@@ -1,22 +1,22 @@
 import streamlit as st
 import pandas as pd
 import yfinance as yf
+import plotly.express as px
 from ml_model import predict
 from engine import save_trade, update_trades, backtest
-import plotly.express as px
 
 st.set_page_config(layout="wide")
 
 st.title("📊 AI Trading Dashboard")
 
+# =========================
+# DARK UI
+# =========================
 st.markdown("""
 <style>
 body {
     background-color: #0e1117;
     color: white;
-}
-.stDataFrame {
-    background-color: #1c1f26;
 }
 </style>
 """, unsafe_allow_html=True)
@@ -28,7 +28,7 @@ if st.button("🔄 Refresh"):
     st.rerun()
 
 # =========================
-# MARKET STATUS (SAFE)
+# MARKET STATUS
 # =========================
 nifty = yf.download("^NSEI", period="1d", interval="5m", progress=False)
 
@@ -37,12 +37,11 @@ if nifty is None or nifty.empty:
     st.stop()
 
 close = nifty["Close"]
-
 if isinstance(close, pd.DataFrame):
     close = close.iloc[:, 0]
 
-if close is None or len(close) < 12:
-    st.warning("Not enough market data yet. Try after some time.")
+if len(close) < 12:
+    st.warning("Not enough market data")
     st.stop()
 
 latest = float(close.iloc[-1])
@@ -102,13 +101,9 @@ for stock in stocks:
 
         price_change = ((latest - old) / old) * 100
         vol_ratio = float(volume.iloc[-1]) / float(volume.mean())
-
         rsi = calculate_rsi(close).iloc[-1]
 
-        # 🔥 FILTERS
         if price_change > 0.5 and vol_ratio > 1.5 and 40 < rsi < 70:
-
-            confidence = predict(price_change, vol_ratio, rsi)
 
             recent_high = float(close.tail(10).max())
             recent_low = float(close.tail(10).min())
@@ -123,6 +118,19 @@ for stock in stocks:
             target = round(entry * 1.015, 2)
             stoploss = round(entry * 0.992, 2)
 
+            # 🤖 ML PREDICTION
+            confidence = predict(
+                price_change,
+                vol_ratio,
+                rsi,
+                entry_type,
+                "Bullish"
+            )
+
+            # 🔥 CONFIDENCE FILTER
+            if confidence < 60:
+                continue
+
             score = price_change + vol_ratio + (confidence / 10)
 
             results.append({
@@ -133,7 +141,9 @@ for stock in stocks:
                 "RSI": round(rsi,2),
                 "Confidence %": confidence,
                 "Type": entry_type,
-                "Score": round(score,2)
+                "Score": round(score,2),
+                "Change": price_change,
+                "Volume": vol_ratio
             })
 
     except:
@@ -151,8 +161,8 @@ df = df.sort_values(by="Score", ascending=False).head(5)
 # DISPLAY TRADES
 # =========================
 st.subheader("📈 Top AI Trade Setups")
-
 st.dataframe(df.style.highlight_max(axis=0))
+
 # =========================
 # BEST TRADE
 # =========================
@@ -160,32 +170,28 @@ best = df.iloc[0]
 
 st.subheader("🏆 Best Trade")
 
-st.success(
-    f"""
+st.success(f"""
 Stock: {best['Stock']}
-
 Entry: ₹{best['Entry']}
 Target: ₹{best['Target']}
 StopLoss: ₹{best['StopLoss']}
-
 Confidence: {best['Confidence %']}%
 Type: {best['Type']}
-"""
-)
+""")
 
 # =========================
-# SAVE TRADE
+# SAVE TRADE (WITH FEATURES)
 # =========================
 save_trade(
     best["Stock"],
     best["Entry"],
     best["Target"],
     best["StopLoss"],
-    price_change,
-    vol_ratio,
-    rsi,
+    best["Change"],
+    best["Volume"],
+    best["RSI"],
     best["Type"],
-    "Bullish" if change > 0 else "Bearish"
+    "Bullish"
 )
 
 # =========================
@@ -198,7 +204,7 @@ risk_per_trade = 0.02
 
 portfolio = []
 
-for i, row in df.iterrows():
+for _, row in df.iterrows():
     try:
         risk_amt = capital * risk_per_trade
         risk_per_share = abs(row["Entry"] - row["StopLoss"])
@@ -218,7 +224,6 @@ for i, row in df.iterrows():
         continue
 
 portfolio_df = pd.DataFrame(portfolio)
-
 st.dataframe(portfolio_df)
 
 # =========================
@@ -245,6 +250,16 @@ if not trades.empty:
     st.dataframe(trades)
 
 # =========================
+# PnL GRAPH
+# =========================
+st.subheader("📈 PnL Trend")
+
+if not trades.empty:
+    trades["Cumulative PnL"] = trades["PnL"].cumsum()
+    fig = px.line(trades, y="Cumulative PnL", title="Profit Curve")
+    st.plotly_chart(fig, use_container_width=True)
+
+# =========================
 # BACKTEST
 # =========================
 st.subheader("🧠 Backtest Result")
@@ -253,12 +268,3 @@ acc, count = backtest(best["Stock"])
 
 st.write(f"Backtest Accuracy: {acc}%")
 st.write(f"Trades Tested: {count}")
-
-st.subheader("📈 PnL Trend")
-
-if not trades.empty:
-    trades["Cumulative PnL"] = trades["PnL"].cumsum()
-
-    fig = px.line(trades, y="Cumulative PnL", title="Profit Curve")
-
-    st.plotly_chart(fig, use_container_width=True)
