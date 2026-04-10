@@ -19,6 +19,10 @@ MAX_CONSECUTIVE_LOSS = 2
 # =========================
 # TELEGRAM
 # =========================
+
+send("🚀 BOT STARTED SUCCESSFULLY")
+
+
 def send(msg):
     try:
         requests.post(
