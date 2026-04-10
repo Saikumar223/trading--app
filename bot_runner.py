@@ -161,7 +161,8 @@ if phase == "OPEN":
                 "stock": t[0],
                 "entry": t[1],
                 "sl": t[2],
-                "qty": qty
+                "qty": qty,
+                "tsl": t[2]  # initialize trailing SL
             })
 
             msg += f"{t[0]} → Buy ₹{round(t[1],2)} | SL ₹{round(t[2],2)} | Qty {qty}\n"
@@ -170,11 +171,10 @@ if phase == "OPEN":
         state["daily_loss"] = 0
 
         save_state(state)
-
         send(msg)
 
 # =========================
-# 🌞 MIDDAY (LIVE DECISIONS)
+# 🌞 MIDDAY (LIVE DECISIONS + TRAILING SL)
 # =========================
 elif phase == "MID":
 
@@ -204,16 +204,26 @@ elif phase == "MID":
             if pnl < 0:
                 daily_loss += abs(pnl)
 
-            if daily_loss >= MAX_DAILY_LOSS:
+            # =========================
+            # 🔥 TRAILING STOPLOSS
+            # =========================
+            if price > trade["entry"] * 1.01:
+                new_tsl = price * 0.995
+                if new_tsl > trade["tsl"]:
+                    trade["tsl"] = new_tsl
+
+            if price < trade["tsl"]:
+                action = "EXIT (TSL HIT) 🔒"
+            elif daily_loss >= MAX_DAILY_LOSS:
                 action = "STOP TRADING 🛑"
             elif price > trade["entry"] * 1.01:
-                action = "HOLD ✅"
+                action = "HOLD ✅ (TSL Active)"
             elif price < trade["entry"]:
                 action = "EXIT ❌"
             else:
                 action = "WAIT ⏳"
 
-            msg += f"{trade['stock']} → ₹{round(price,2)} | PnL ₹{round(pnl,2)} → {action}\n"
+            msg += f"{trade['stock']} → ₹{round(price,2)} | PnL ₹{round(pnl,2)} | TSL ₹{round(trade['tsl'],2)} → {action}\n"
 
         except:
             continue
@@ -222,7 +232,6 @@ elif phase == "MID":
     save_state(state)
 
     msg += f"\nTotal Loss Today: ₹{round(daily_loss,2)}"
-
     send(msg)
 
 # =========================
