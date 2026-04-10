@@ -1,8 +1,6 @@
 import pandas as pd
 import yfinance as yf
 import os
-import requests
-import streamlit as st
 
 FILE = "trades.csv"
 
@@ -42,34 +40,15 @@ def save_trade(stock, entry, target, sl, change, volume, rsi, entry_type, market
     df = pd.concat([df, new], ignore_index=True)
     df.to_csv(FILE, index=False)
 
-# =========================
-# 🔔 TELEGRAM EXIT ALERT
-# =========================
-def send_exit_alert(stock, status, entry, exit_price, pnl):
-    try:
-        TOKEN = st.secrets["TOKEN"]
-        CHAT_ID = st.secrets["CHAT_ID"]
+def stock_ranking():
+    df = read_file()
+    df = df[df["Status"].isin(["WIN","LOSS"])]
+    if df.empty:
+        return {}
+    summary = df.groupby("Stock")["Status"].value_counts().unstack().fillna(0)
+    summary["WinRate"] = summary.get("WIN",0) / summary.sum(axis=1)
+    return summary["WinRate"].to_dict()
 
-        msg = f"""
-📊 TRADE CLOSED
-
-{stock}
-Status: {status}
-Entry: ₹{entry}
-Exit: ₹{exit_price}
-PnL: ₹{round(pnl,2)}
-"""
-
-        requests.post(
-            f"https://api.telegram.org/bot{TOKEN}/sendMessage",
-            data={"chat_id": CHAT_ID, "text": msg}
-        )
-    except:
-        pass
-
-# =========================
-# UPDATE TRADES
-# =========================
 def update_trades():
     df = read_file()
 
@@ -77,50 +56,25 @@ def update_trades():
         if row["Status"] == "OPEN":
             try:
                 data = yf.download(row["Stock"], period="1d", interval="5m", progress=False)
-
                 if data.empty:
                     continue
 
-                close_data = data["Close"]
+                close = data["Close"]
+                if isinstance(close, pd.DataFrame):
+                    close = close.iloc[:, 0]
 
-                if isinstance(close_data, pd.DataFrame):
-                    close_data = close_data.iloc[:, 0]
+                price = float(close.iloc[-1])
 
-                price = float(close_data.iloc[-1])
-
-                # 🎯 TARGET HIT
                 if price >= row["Target"]:
                     df.at[i,"Status"]="WIN"
-                    df.at[i,"Exit"]=price
                     df.at[i,"PnL"]=price-row["Entry"]
 
-                    send_exit_alert(
-                        row["Stock"],
-                        "TARGET HIT 🎯",
-                        row["Entry"],
-                        price,
-                        price-row["Entry"]
-                    )
-
-                # 🛑 STOPLOSS HIT
                 elif price <= row["SL"]:
                     df.at[i,"Status"]="LOSS"
-                    df.at[i,"Exit"]=price
                     df.at[i,"PnL"]=price-row["Entry"]
-
-                    send_exit_alert(
-                        row["Stock"],
-                        "STOPLOSS HIT 🛑",
-                        row["Entry"],
-                        price,
-                        price-row["Entry"]
-                    )
 
             except:
                 continue
 
     df.to_csv(FILE,index=False)
     return df
-
-def backtest(stock):
-    return 60, 50
