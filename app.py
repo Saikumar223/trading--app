@@ -176,7 +176,17 @@ Type: {best['Type']}
 # =========================
 # SAVE TRADE
 # =========================
-save_trade(best["Stock"], best["Entry"], best["Target"], best["StopLoss"])
+save_trade(
+    best["Stock"],
+    best["Entry"],
+    best["Target"],
+    best["StopLoss"],
+    price_change,
+    vol_ratio,
+    rsi,
+    best["Type"],
+    "Bullish" if change > 0 else "Bearish"
+)
 
 # =========================
 # PORTFOLIO
