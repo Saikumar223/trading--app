@@ -9,6 +9,9 @@ from engine import stock_ranking
 TOKEN = os.getenv("TOKEN")
 CHAT_ID = os.getenv("CHAT_ID")
 
+print("DEBUG TOKEN:", TOKEN)
+print("DEBUG CHAT_ID:", CHAT_ID)
+
 STATE_FILE = "trade_state.json"
 
 CAPITAL = 1000
