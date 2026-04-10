@@ -46,11 +46,9 @@ if len(close) < 12:
 
 latest = float(close.iloc[-1])
 old = float(close.iloc[-12])
-
 change = ((latest - old) / old) * 100
 
 col1, col2, col3 = st.columns(3)
-
 col1.metric("NIFTY Trend", f"{round(change,2)}%")
 col2.metric("Market Status", "Bullish" if change > 0 else "Weak")
 col3.metric("Strategy", "Active" if change > 0 else "Paused")
@@ -75,10 +73,7 @@ def calculate_rsi(series, period=14):
 stocks = [
     "RELIANCE.NS","TCS.NS","INFY.NS","HDFCBANK.NS","ICICIBANK.NS",
     "SBIN.NS","ITC.NS","LT.NS","AXISBANK.NS","KOTAKBANK.NS",
-    "BAJFINANCE.NS","BHARTIARTL.NS","ASIANPAINT.NS","MARUTI.NS",
-    "TITAN.NS","SUNPHARMA.NS","ONGC.NS","NTPC.NS","POWERGRID.NS",
-    "COALINDIA.NS","JSWSTEEL.NS","TATASTEEL.NS","WIPRO.NS",
-    "TECHM.NS","HCLTECH.NS","DRREDDY.NS","CIPLA.NS"
+    "JSWSTEEL.NS","TATASTEEL.NS","WIPRO.NS","TECHM.NS"
 ]
 
 results = []
@@ -118,7 +113,6 @@ for stock in stocks:
             target = round(entry * 1.015, 2)
             stoploss = round(entry * 0.992, 2)
 
-            # 🤖 ML PREDICTION
             confidence = predict(
                 price_change,
                 vol_ratio,
@@ -127,7 +121,6 @@ for stock in stocks:
                 "Bullish"
             )
 
-            # 🔥 CONFIDENCE FILTER
             if confidence < 60:
                 continue
 
@@ -157,19 +150,12 @@ if df.empty:
 
 df = df.sort_values(by="Score", ascending=False).head(5)
 
-# =========================
-# DISPLAY TRADES
-# =========================
 st.subheader("📈 Top AI Trade Setups")
-st.dataframe(df.style.highlight_max(axis=0))
+st.dataframe(df)
 
-# =========================
-# BEST TRADE
-# =========================
 best = df.iloc[0]
 
 st.subheader("🏆 Best Trade")
-
 st.success(f"""
 Stock: {best['Stock']}
 Entry: ₹{best['Entry']}
@@ -180,7 +166,7 @@ Type: {best['Type']}
 """)
 
 # =========================
-# SAVE TRADE (WITH FEATURES)
+# SAVE TRADE
 # =========================
 save_trade(
     best["Stock"],
@@ -195,58 +181,12 @@ save_trade(
 )
 
 # =========================
-# PORTFOLIO
-# =========================
-st.subheader("💼 Portfolio Allocation")
-
-capital = 1000
-risk_per_trade = 0.02
-
-portfolio = []
-
-for _, row in df.iterrows():
-    try:
-        risk_amt = capital * risk_per_trade
-        risk_per_share = abs(row["Entry"] - row["StopLoss"])
-
-        if risk_per_share == 0:
-            continue
-
-        qty = int(risk_amt / risk_per_share)
-
-        portfolio.append({
-            "Stock": row["Stock"],
-            "Qty": qty,
-            "Investment": round(qty * row["Entry"], 2)
-        })
-
-    except:
-        continue
-
-portfolio_df = pd.DataFrame(portfolio)
-st.dataframe(portfolio_df)
-
-# =========================
-# TRADE PERFORMANCE
+# PERFORMANCE
 # =========================
 st.subheader("📊 Trade Performance")
-
 trades = update_trades()
 
 if not trades.empty:
-    total = len(trades)
-    wins = len(trades[trades["Status"] == "WIN"])
-    losses = len(trades[trades["Status"] == "LOSS"])
-    pnl = trades["PnL"].sum()
-
-    accuracy = (wins / total * 100) if total > 0 else 0
-
-    st.write(f"Total Trades: {total}")
-    st.write(f"Wins: {wins}")
-    st.write(f"Losses: {losses}")
-    st.write(f"Accuracy: {round(accuracy,2)}%")
-    st.write(f"Total PnL: ₹{round(pnl,2)}")
-
     st.dataframe(trades)
 
 # =========================
@@ -256,15 +196,13 @@ st.subheader("📈 PnL Trend")
 
 if not trades.empty:
     trades["Cumulative PnL"] = trades["PnL"].cumsum()
-    fig = px.line(trades, y="Cumulative PnL", title="Profit Curve")
-    st.plotly_chart(fig, use_container_width=True)
+    fig = px.line(trades, y="Cumulative PnL")
+    st.plotly_chart(fig)
 
 # =========================
 # BACKTEST
 # =========================
-st.subheader("🧠 Backtest Result")
+st.subheader("🧠 Backtest")
 
 acc, count = backtest(best["Stock"])
-
-st.write(f"Backtest Accuracy: {acc}%")
-st.write(f"Trades Tested: {count}")
+st.write(f"Accuracy: {acc}% | Trades: {count}")
