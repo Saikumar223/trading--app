@@ -1,64 +1,44 @@
-import streamlit as st
 import yfinance as yf
-import pandas as pd
 import requests
+import json
+import os
 
-st.set_page_config(page_title="Trading App", layout="wide")
+TOKEN = "YOUR_BOT_TOKEN"
+CHAT_ID = "YOUR_CHAT_ID"
 
-st.title("📊 Smart Trading App (₹1000 Strategy)")
+FILE = "last_alert.json"
 
 # =========================
 # TELEGRAM FUNCTION
 # =========================
-def send_telegram(msg):
-    token = st.secrets["TELEGRAM_TOKEN"]
-    chat_id = st.secrets["CHAT_ID"]
-
-    url = f"https://api.telegram.org/bot{token}/sendMessage"
-    data = {"chat_id": chat_id, "text": msg}
-
-    try:
-        requests.post(url, data=data)
-    except:
-        pass
+def send(msg):
+    url = f"https://api.telegram.org/bot{TOKEN}/sendMessage"
+    requests.post(url, data={"chat_id": CHAT_ID, "text": msg})
 
 # =========================
-# REFRESH
+# LOAD LAST ALERT
 # =========================
-if st.button("🔄 Refresh"):
-    st.rerun()
+def load_last():
+    if os.path.exists(FILE):
+        with open(FILE, "r") as f:
+            return json.load(f)
+    return {}
 
 # =========================
-# MARKET CHECK
+# SAVE ALERT
 # =========================
-nifty = yf.download("^NSEI", period="1d", interval="5m", progress=False)
-
-market_ok = False
-
-if not nifty.empty:
-    close = nifty["Close"]
-    if isinstance(close, pd.DataFrame):
-        close = close.iloc[:,0]
-
-    change = ((close.iloc[-1] - close.iloc[-12]) / close.iloc[-12]) * 100
-
-    st.write(f"📉 NIFTY Trend: {round(change,2)}%")
-
-    if change > 0:
-        st.success("Market Bullish ✅")
-        market_ok = True
-    else:
-        st.warning("Market Weak ⚠️")
-
-if not market_ok:
-    st.stop()
+def save_last(data):
+    with open(FILE, "w") as f:
+        json.dump(data, f)
 
 # =========================
 # STOCK SCAN
 # =========================
 stocks = ["IRFC.NS","NBCC.NS","PNB.NS","IDFCFIRSTB.NS"]
 
-results = []
+best_stock = None
+best_score = 0
+best_data = {}
 
 for stock in stocks:
     try:
@@ -77,48 +57,46 @@ for stock in stocks:
         if latest > 500:
             continue
 
-        if change > 0.4:
+        if change > best_score:
+            best_score = change
+
             entry = round(latest,2)
             target = round(entry * 1.015,2)
             stoploss = round(entry * 0.992,2)
 
-            score = change
-
-            results.append({
+            best_data = {
                 "Stock": stock,
                 "Entry": entry,
                 "Target": target,
-                "Stoploss": stoploss,
-                "Score": round(score,2)
-            })
+                "Stoploss": stoploss
+            }
 
     except:
         continue
 
 # =========================
-# OUTPUT + ALERT
+# DUPLICATE CHECK
 # =========================
-if results:
-    df = pd.DataFrame(results)
-    best = df.sort_values(by="Score", ascending=False).iloc[0]
+last = load_last()
 
-    st.subheader("🏆 Best Trade")
-    st.success(best.to_dict())
+if best_data:
 
-    # 🔥 SEND TELEGRAM ALERT
-    msg = f"""
+    if best_data != last:
+        # NEW ALERT
+        msg = f"""
 📈 NEW TRADE ALERT
 
-Stock: {best['Stock']}
-Entry: ₹{best['Entry']}
-Target: ₹{best['Target']}
-StopLoss: ₹{best['Stoploss']}
+Stock: {best_data['Stock']}
+Entry: ₹{best_data['Entry']}
+Target: ₹{best_data['Target']}
+StopLoss: ₹{best_data['Stoploss']}
 """
 
-    send_telegram(msg)
+        send(msg)
+        save_last(best_data)
 
-    st.subheader("📊 All Trades")
-    st.dataframe(df)
+    else:
+        print("Duplicate alert skipped")
 
 else:
-    st.warning("No trades found")
+    print("No trade found")
