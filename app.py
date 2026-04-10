@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import yfinance as yf
 from ml_model import predict
+from engine import save_trade, update_trades, backtest
 
 st.set_page_config(layout="wide")
 
@@ -27,7 +28,6 @@ close = nifty["Close"]
 if isinstance(close, pd.DataFrame):
     close = close.iloc[:, 0]
 
-# ✅ SAFETY CHECK (FIXES YOUR ERROR)
 if close is None or len(close) < 12:
     st.warning("Not enough market data yet. Try after some time.")
     st.stop()
@@ -92,7 +92,7 @@ for stock in stocks:
 
         rsi = calculate_rsi(close).iloc[-1]
 
-        # ✅ STRONG FILTERS
+        # 🔥 FILTERS
         if price_change > 0.5 and vol_ratio > 1.5 and 40 < rsi < 70:
 
             confidence = predict(price_change, vol_ratio, rsi)
@@ -126,9 +126,6 @@ for stock in stocks:
     except:
         continue
 
-# =========================
-# DISPLAY RESULTS
-# =========================
 df = pd.DataFrame(results)
 
 if df.empty:
@@ -137,6 +134,9 @@ if df.empty:
 
 df = df.sort_values(by="Score", ascending=False).head(5)
 
+# =========================
+# DISPLAY TRADES
+# =========================
 st.subheader("📈 Top AI Trade Setups")
 st.dataframe(df)
 
@@ -161,7 +161,12 @@ Type: {best['Type']}
 )
 
 # =========================
-# PORTFOLIO ALLOCATION
+# SAVE TRADE
+# =========================
+save_trade(best["Stock"], best["Entry"], best["Target"], best["StopLoss"])
+
+# =========================
+# PORTFOLIO
 # =========================
 st.subheader("💼 Portfolio Allocation")
 
@@ -192,3 +197,36 @@ for i, row in df.iterrows():
 portfolio_df = pd.DataFrame(portfolio)
 
 st.dataframe(portfolio_df)
+
+# =========================
+# TRADE PERFORMANCE
+# =========================
+st.subheader("📊 Trade Performance")
+
+trades = update_trades()
+
+if not trades.empty:
+    total = len(trades)
+    wins = len(trades[trades["Status"] == "WIN"])
+    losses = len(trades[trades["Status"] == "LOSS"])
+    pnl = trades["PnL"].sum()
+
+    accuracy = (wins / total * 100) if total > 0 else 0
+
+    st.write(f"Total Trades: {total}")
+    st.write(f"Wins: {wins}")
+    st.write(f"Losses: {losses}")
+    st.write(f"Accuracy: {round(accuracy,2)}%")
+    st.write(f"Total PnL: ₹{round(pnl,2)}")
+
+    st.dataframe(trades)
+
+# =========================
+# BACKTEST
+# =========================
+st.subheader("🧠 Backtest Result")
+
+acc, count = backtest(best["Stock"])
+
+st.write(f"Backtest Accuracy: {acc}%")
+st.write(f"Trades Tested: {count}")
