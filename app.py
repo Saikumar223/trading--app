@@ -1,22 +1,26 @@
 import streamlit as st
 import yfinance as yf
 import pandas as pd
-import plotly.graph_objects as go
-import os
+import requests
 
 st.set_page_config(page_title="Trading App", layout="wide")
 
 st.title("📊 Smart Trading App (₹1000 Strategy)")
 
 # =========================
-# FILE FOR TRADE TRACKING
+# TELEGRAM FUNCTION
 # =========================
-TRADE_FILE = "trades.csv"
+def send_telegram(msg):
+    token = st.secrets["TELEGRAM_TOKEN"]
+    chat_id = st.secrets["CHAT_ID"]
 
-if not os.path.exists(TRADE_FILE):
-    pd.DataFrame(columns=[
-        "Stock","Entry","Target","Stoploss","Status","Exit","PnL"
-    ]).to_csv(TRADE_FILE, index=False)
+    url = f"https://api.telegram.org/bot{token}/sendMessage"
+    data = {"chat_id": chat_id, "text": msg}
+
+    try:
+        requests.post(url, data=data)
+    except:
+        pass
 
 # =========================
 # REFRESH
@@ -64,7 +68,6 @@ for stock in stocks:
             continue
 
         close = data["Close"][stock]
-        volume = data["Volume"][stock]
 
         latest = float(close.iloc[-1])
         old = float(close.iloc[-12])
@@ -75,12 +78,11 @@ for stock in stocks:
             continue
 
         if change > 0.4:
-            entry = latest
+            entry = round(latest,2)
             target = round(entry * 1.015,2)
             stoploss = round(entry * 0.992,2)
 
-            volume_ratio = float(volume.iloc[-1]) / float(volume.mean())
-            score = (change * 0.6) + (volume_ratio * 0.4)
+            score = change
 
             results.append({
                 "Stock": stock,
@@ -94,77 +96,29 @@ for stock in stocks:
         continue
 
 # =========================
-# OUTPUT
+# OUTPUT + ALERT
 # =========================
 if results:
     df = pd.DataFrame(results)
     best = df.sort_values(by="Score", ascending=False).iloc[0]
 
     st.subheader("🏆 Best Trade")
-
     st.success(best.to_dict())
 
-    # =========================
-    # SAVE TRADE (NEW)
-    # =========================
-    trades = pd.read_csv(TRADE_FILE)
+    # 🔥 SEND TELEGRAM ALERT
+    msg = f"""
+📈 NEW TRADE ALERT
 
-    if not ((trades["Stock"] == best["Stock"]) & (trades["Status"] == "OPEN")).any():
-        new_trade = pd.DataFrame([{
-            "Stock": best["Stock"],
-            "Entry": best["Entry"],
-            "Target": best["Target"],
-            "Stoploss": best["Stoploss"],
-            "Status": "OPEN",
-            "Exit": 0,
-            "PnL": 0
-        }])
+Stock: {best['Stock']}
+Entry: ₹{best['Entry']}
+Target: ₹{best['Target']}
+StopLoss: ₹{best['Stoploss']}
+"""
 
-        trades = pd.concat([trades, new_trade])
-        trades.to_csv(TRADE_FILE, index=False)
+    send_telegram(msg)
 
-    # =========================
-    # UPDATE TRADES
-    # =========================
-    for i, row in trades.iterrows():
-        if row["Status"] == "OPEN":
-            data = yf.download(row["Stock"], period="1d", interval="5m", progress=False)
-
-            if not data.empty:
-                price = float(data["Close"][row["Stock"]].iloc[-1])
-
-                if price >= row["Target"]:
-                    trades.at[i, "Status"] = "WIN"
-                    trades.at[i, "Exit"] = price
-                    trades.at[i, "PnL"] = price - row["Entry"]
-
-                elif price <= row["Stoploss"]:
-                    trades.at[i, "Status"] = "LOSS"
-                    trades.at[i, "Exit"] = price
-                    trades.at[i, "PnL"] = price - row["Entry"]
-
-    trades.to_csv(TRADE_FILE, index=False)
-
-    # =========================
-    # STATS
-    # =========================
-    total = len(trades)
-    wins = len(trades[trades["Status"] == "WIN"])
-    losses = len(trades[trades["Status"] == "LOSS"])
-    pnl = trades["PnL"].sum()
-
-    accuracy = (wins / total * 100) if total > 0 else 0
-
-    st.subheader("📊 Performance")
-
-    st.write(f"Total Trades: {total}")
-    st.write(f"Wins: {wins}")
-    st.write(f"Losses: {losses}")
-    st.write(f"Accuracy: {round(accuracy,2)}%")
-    st.write(f"Total PnL: ₹{round(pnl,2)}")
-
-    st.subheader("📋 Trade History")
-    st.dataframe(trades)
+    st.subheader("📊 All Trades")
+    st.dataframe(df)
 
 else:
     st.warning("No trades found")
