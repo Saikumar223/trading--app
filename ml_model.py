@@ -1,10 +1,8 @@
 import pandas as pd
 import os
-import joblib
 from sklearn.ensemble import RandomForestClassifier
 
 FILE = "trades.csv"
-MODEL_FILE = "model.pkl"
 
 model = None
 
@@ -22,24 +20,19 @@ def train():
 
     df["result"] = df["Status"].apply(lambda x: 1 if x=="WIN" else 0)
 
+    # Safe features (fallback if missing)
+    df["Change"] = df.get("Change", 0)
+    df["Volume"] = df.get("Volume", 1)
+    df["RSI"] = df.get("RSI", 50)
+
     X = df[["Change","Volume","RSI"]]
     y = df["result"]
 
-    model = RandomForestClassifier(n_estimators=200, max_depth=5)
+    model = RandomForestClassifier(n_estimators=100, max_depth=5)
     model.fit(X,y)
-
-    joblib.dump(model, MODEL_FILE)
-
-def load_model():
-    global model
-    if os.path.exists(MODEL_FILE):
-        model = joblib.load(MODEL_FILE)
 
 def predict(change, vol, rsi, *_):
     global model
-
-    if model is None:
-        load_model()
 
     if model is None:
         train()
