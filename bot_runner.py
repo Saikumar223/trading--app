@@ -2,11 +2,15 @@ import yfinance as yf
 import pandas as pd
 import requests
 import os
+import json
+from datetime import datetime
 from ml_model import predict
 from engine import stock_ranking
 
 TOKEN = os.getenv("TOKEN")
 CHAT_ID = os.getenv("CHAT_ID")
+
+STATE_FILE = "trade_state.json"
 
 def send(msg):
     try:
@@ -17,6 +21,36 @@ def send(msg):
     except:
         pass
 
+# =========================
+# STATE MANAGEMENT
+# =========================
+def load_state():
+    if not os.path.exists(STATE_FILE):
+        return {}
+    with open(STATE_FILE, "r") as f:
+        return json.load(f)
+
+def save_state(data):
+    with open(STATE_FILE, "w") as f:
+        json.dump(data, f)
+
+state = load_state()
+
+# =========================
+# TIME PHASE DETECTION
+# =========================
+hour = datetime.utcnow().hour  # UTC
+
+if hour < 5:
+    phase = "OPEN"
+elif hour < 9:
+    phase = "MID"
+else:
+    phase = "CLOSE"
+
+# =========================
+# COMMON FUNCTIONS
+# =========================
 def ema(series, span):
     return series.ewm(span=span).mean()
 
@@ -41,101 +75,132 @@ def higher_tf(stock):
 
     return close.iloc[-1] > ema(close,20).iloc[-1] > ema(close,50).iloc[-1]
 
-stocks = [
-    "RELIANCE.NS","TCS.NS","INFY.NS",
-    "HDFCBANK.NS","ICICIBANK.NS","SBIN.NS"
-]
-
+stocks = ["RELIANCE.NS","TCS.NS","INFY.NS","HDFCBANK.NS","SBIN.NS"]
 rankings = stock_ranking()
-results = []
 
 # =========================
-# MARKET CHECK
+# 🌅 MORNING LOGIC
 # =========================
-nifty = yf.download("^NSEI", period="1d", interval="5m", progress=False)
+if phase == "OPEN":
 
-if nifty.empty:
-    send("⚠️ Market data unavailable")
-    exit()
+    results = []
 
-close = nifty["Close"]
-if isinstance(close, pd.DataFrame):
-    close = close.iloc[:, 0]
+    for stock in stocks:
+        try:
+            if not higher_tf(stock):
+                continue
 
-if len(close) < 12:
-    exit()
+            data = yf.download(stock, period="1d", interval="5m", progress=False)
+            if data.empty:
+                continue
 
-change = ((close.iloc[-1] - close.iloc[-12]) / close.iloc[-12]) * 100
+            close = data["Close"]
+            if isinstance(close, pd.DataFrame):
+                close = close.iloc[:, 0]
 
-if change <= 0:
-    send("⚠️ Market is weak. No trades.")
-    exit()
+            support, resistance = sr(close)
 
-# =========================
-# SCAN
-# =========================
-for stock in stocks:
-    try:
-        if not higher_tf(stock):
+            score = rankings.get(stock, 0.5)
+
+            results.append((stock, resistance, support, score))
+
+        except:
             continue
 
-        data = yf.download(stock, period="1d", interval="5m", progress=False)
-        if data.empty:
-            continue
+    if not results:
+        send("⚠️ No trades today")
+    else:
+        best = sorted(results, key=lambda x: x[3], reverse=True)[0]
 
-        close = data["Close"]
-        volume = data["Volume"]
+        state["trade"] = {
+            "stock": best[0],
+            "entry": best[1],
+            "sl": best[2]
+        }
 
-        if isinstance(close, pd.DataFrame):
-            close = close.iloc[:, 0]
-            volume = volume.iloc[:, 0]
+        save_state(state)
 
-        latest = float(close.iloc[-1])
-        old = float(close.iloc[-12])
-
-        change = ((latest-old)/old)*100
-        vol = float(volume.iloc[-1]) / float(volume.mean())
-        r = rsi(close).iloc[-1]
-
-        ema20 = ema(close,20).iloc[-1]
-        ema50 = ema(close,50).iloc[-1]
-
-        if not (latest > ema20 > ema50):
-            continue
-
-        if r > 65 or r < 40:
-            continue
-
-        support, resistance = sr(close)
-
-        if latest < resistance * 0.995:
-            continue
-
-        confidence = predict(change, vol, r, "AUTO", "Bullish")
-        winrate = rankings.get(stock, 0.5)
-
-        score = confidence + (winrate * 100)
-
-        results.append((stock, resistance, support, score))
-
-    except:
-        continue
-
-# =========================
-# FINAL SIGNAL
-# =========================
-if not results:
-    send("⚠️ No high-quality trades found")
-else:
-    best = sorted(results, key=lambda x: x[3], reverse=True)[0]
-
-    msg = f"""
-🚀 AUTO TRADE SIGNAL
+        send(f"""
+🌅 MORNING TRADE
 
 Stock: {best[0]}
-Entry: ₹{round(best[1],2)}
-Target: ₹{round(best[1]*1.015,2)}
+Buy above: ₹{round(best[1],2)}
 SL: ₹{round(best[2],2)}
-"""
+""")
 
-    send(msg)
+# =========================
+# 🌞 MIDDAY LOGIC
+# =========================
+elif phase == "MID":
+
+    trade = state.get("trade")
+
+    if not trade:
+        send("⚠️ No active trade")
+        exit()
+
+    data = yf.download(trade["stock"], period="1d", interval="5m", progress=False)
+
+    if data.empty:
+        exit()
+
+    close = data["Close"]
+    if isinstance(close, pd.DataFrame):
+        close = close.iloc[:, 0]
+
+    price = float(close.iloc[-1])
+
+    if price > trade["entry"] * 1.01:
+        action = "HOLD ✅ (Strong)"
+    elif price < trade["entry"]:
+        action = "EXIT ❌ (Weak)"
+    else:
+        action = "WAIT ⏳"
+
+    send(f"""
+🌞 MIDDAY UPDATE
+
+{trade['stock']}
+Current: ₹{round(price,2)}
+
+Action: {action}
+""")
+
+# =========================
+# 🌆 CLOSING LOGIC
+# =========================
+else:
+
+    trade = state.get("trade")
+
+    if not trade:
+        send("📊 No trades today")
+        exit()
+
+    data = yf.download(trade["stock"], period="1d", interval="5m", progress=False)
+
+    if data.empty:
+        exit()
+
+    close = data["Close"]
+    if isinstance(close, pd.DataFrame):
+        close = close.iloc[:, 0]
+
+    price = float(close.iloc[-1])
+
+    pnl = price - trade["entry"]
+
+    send(f"""
+🌆 MARKET CLOSE
+
+{trade['stock']}
+Close: ₹{round(price,2)}
+
+PnL: ₹{round(pnl,2)}
+
+Action:
+{"BOOK PROFIT ✅" if pnl > 0 else "STOPLOSS HIT ❌"}
+""")
+
+    state.clear()
+    save_state(state)
