@@ -40,19 +40,13 @@ def save_trade(stock, entry, target, sl, change, volume, rsi, entry_type, market
     df = pd.concat([df, new], ignore_index=True)
     df.to_csv(FILE, index=False)
 
-# ✅ IMPORTANT FUNCTION (MISSING BEFORE)
 def stock_ranking():
     df = read_file()
-
-    df = df[df["Status"].isin(["WIN", "LOSS"])]
-
+    df = df[df["Status"].isin(["WIN","LOSS"])]
     if df.empty:
         return {}
-
     summary = df.groupby("Stock")["Status"].value_counts().unstack().fillna(0)
-
-    summary["WinRate"] = summary.get("WIN", 0) / summary.sum(axis=1)
-
+    summary["WinRate"] = summary.get("WIN",0) / summary.sum(axis=1)
     return summary["WinRate"].to_dict()
 
 def update_trades():
@@ -62,12 +56,10 @@ def update_trades():
         if row["Status"] == "OPEN":
             try:
                 data = yf.download(row["Stock"], period="1d", interval="5m", progress=False)
-
                 if data.empty:
                     continue
 
                 close = data["Close"]
-
                 if isinstance(close, pd.DataFrame):
                     close = close.iloc[:, 0]
 
