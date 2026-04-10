@@ -37,7 +37,7 @@ def save_trade(stock, entry, target, sl, change, volume, rsi, entry_type, market
         "PnL": 0
     }])
 
-    df = pd.concat([df, new])
+    df = pd.concat([df, new], ignore_index=True)
     df.to_csv(FILE, index=False)
 
 def update_trades():
@@ -45,19 +45,29 @@ def update_trades():
 
     for i, row in df.iterrows():
         if row["Status"] == "OPEN":
-            data = yf.download(row["Stock"], period="1d", interval="5m", progress=False)
-            if data.empty:
+            try:
+                data = yf.download(row["Stock"], period="1d", interval="5m", progress=False)
+
+                if data.empty:
+                    continue
+
+                close_data = data["Close"]
+
+                if isinstance(close_data, pd.DataFrame):
+                    close_data = close_data.iloc[:, 0]
+
+                price = float(close_data.iloc[-1])
+
+                if price >= row["Target"]:
+                    df.at[i,"Status"]="WIN"
+                    df.at[i,"PnL"]=price-row["Entry"]
+
+                elif price <= row["SL"]:
+                    df.at[i,"Status"]="LOSS"
+                    df.at[i,"PnL"]=price-row["Entry"]
+
+            except:
                 continue
-
-            price = float(data["Close"][row["Stock"]].iloc[-1])
-
-            if price >= row["Target"]:
-                df.at[i,"Status"]="WIN"
-                df.at[i,"PnL"]=price-row["Entry"]
-
-            elif price <= row["SL"]:
-                df.at[i,"Status"]="LOSS"
-                df.at[i,"PnL"]=price-row["Entry"]
 
     df.to_csv(FILE,index=False)
     return df
