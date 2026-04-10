@@ -5,13 +5,14 @@ import plotly.graph_objects as go
 import requests
 import hashlib
 from ml_model import predict
-from engine import save_trade, update_trades, backtest
+from engine import save_trade, update_trades, stock_ranking
 
 st.set_page_config(layout="wide")
 
 st.title("📊 AI Trading Dashboard")
 
 mode = st.selectbox("Mode", ["Intraday", "Swing"])
+capital = st.number_input("💰 Capital (₹)", value=1000)
 
 # =========================
 # TELEGRAM ALERT
@@ -37,6 +38,7 @@ def send_telegram_alert(best):
 Entry: ₹{best['Entry']}
 Target: ₹{best['Target']}
 SL: ₹{best['StopLoss']}
+Qty: {best['Qty']}
 Confidence: {best['Confidence %']}%
 """
 
@@ -49,6 +51,17 @@ Confidence: {best['Confidence %']}%
 
     except:
         pass
+
+# =========================
+# POSITION SIZE
+# =========================
+def calculate_position(entry, sl, capital):
+    risk = capital * 0.02
+    risk_per_share = abs(entry - sl)
+    if risk_per_share == 0:
+        return 0, 0
+    qty = int(risk / risk_per_share)
+    return qty, qty * entry
 
 # =========================
 # MARKET
@@ -65,9 +78,7 @@ if isinstance(close, pd.DataFrame):
 if len(close) < 12:
     st.stop()
 
-latest = float(close.iloc[-1])
-old = float(close.iloc[-12])
-change = ((latest - old) / old) * 100
+change = ((close.iloc[-1] - close.iloc[-12]) / close.iloc[-12]) * 100
 
 st.write(f"NIFTY Trend: {round(change,2)}%")
 
@@ -78,23 +89,31 @@ if change <= 0:
 # =========================
 # FUNCTIONS
 # =========================
-def calculate_rsi(series):
+def ema(series, span):
+    return series.ewm(span=span).mean()
+
+def rsi(series):
     delta = series.diff()
     gain = delta.clip(lower=0).rolling(14).mean()
     loss = -delta.clip(upper=0).rolling(14).mean()
     rs = gain / loss
     return 100 - (100/(1+rs))
 
-def ema(series, span):
-    return series.ewm(span=span).mean()
+def sr(series):
+    return float(series.tail(20).min()), float(series.tail(20).max())
 
-stocks = [
-    "RELIANCE.NS","TCS.NS","INFY.NS",
-    "HDFCBANK.NS","ICICIBANK.NS",
-    "SBIN.NS","ITC.NS","LT.NS",
-    "JSWSTEEL.NS","TATASTEEL.NS"
-]
+def higher_tf(stock):
+    data = yf.download(stock, period="2d", interval="15m", progress=False)
+    if data.empty:
+        return False
+    c = data["Close"]
+    if isinstance(c, pd.DataFrame):
+        c = c.iloc[:, 0]
+    return c.iloc[-1] > ema(c,20).iloc[-1] > ema(c,50).iloc[-1]
 
+stocks = ["RELIANCE.NS","TCS.NS","INFY.NS","HDFCBANK.NS","SBIN.NS"]
+
+rankings = stock_ranking()
 results = []
 
 # =========================
@@ -102,9 +121,11 @@ results = []
 # =========================
 for stock in stocks:
     try:
-        data = yf.download(stock, period="1d", interval="5m", progress=False)
+        if not higher_tf(stock):
+            continue
 
-        if data.empty or len(data) < 20:
+        data = yf.download(stock, period="1d", interval="5m", progress=False)
+        if data.empty:
             continue
 
         close = data["Close"]
@@ -117,60 +138,48 @@ for stock in stocks:
         latest = float(close.iloc[-1])
         old = float(close.iloc[-12])
 
-        price_change = ((latest-old)/old)*100
-        vol_ratio = float(volume.iloc[-1]) / float(volume.mean())
-        rsi = calculate_rsi(close).iloc[-1]
+        change = ((latest-old)/old)*100
+        vol = float(volume.iloc[-1]) / float(volume.mean())
+        r = rsi(close).iloc[-1]
 
-        # =========================
-        # 🔥 NEW: TREND CONFIRMATION
-        # =========================
-        ema20 = ema(close, 20).iloc[-1]
-        ema50 = ema(close, 50).iloc[-1]
+        ema20 = ema(close,20).iloc[-1]
+        ema50 = ema(close,50).iloc[-1]
 
         if not (latest > ema20 > ema50):
             continue
 
-        # =========================
-        # 🔥 NEW: RSI FILTER
-        # =========================
-        if rsi > 65:   # avoid overbought
+        if r > 65 or r < 40:
             continue
 
-        # =========================
-        # EXISTING FILTER
-        # =========================
-        if price_change < 0.7 or vol_ratio < 1.5 or rsi < 40:
+        support, resistance = sr(close)
+
+        if latest < resistance * 0.995:
             continue
 
-        recent_high = float(close.tail(10).max())
+        entry = resistance
+        target = entry * (1.03 if mode=="Swing" else 1.015)
+        sl = support
 
-        # 🔥 avoid weak breakout
-        if latest < recent_high * 0.998:
-            continue
-
-        entry = recent_high
-        entry_type = "Strong Breakout 🚀"
-
-        if mode == "Swing":
-            target = entry * 1.03
-            stoploss = entry * 0.97
-        else:
-            target = entry * 1.015
-            stoploss = entry * 0.992
-
-        confidence = predict(price_change, vol_ratio, rsi, entry_type, "Bullish")
+        confidence = predict(change, vol, r, "AUTO", "Bullish")
 
         if confidence != 50 and confidence < 60:
             continue
+
+        qty, investment = calculate_position(entry, sl, capital)
+        if qty == 0:
+            continue
+
+        winrate = rankings.get(stock, 0.5)*100
 
         results.append({
             "Stock": stock,
             "Entry": round(entry,2),
             "Target": round(target,2),
-            "StopLoss": round(stoploss,2),
+            "StopLoss": round(sl,2),
+            "Qty": qty,
+            "Investment": round(investment,2),
             "Confidence %": confidence,
-            "Change": price_change,
-            "Volume": vol_ratio
+            "WinRate": round(winrate,2)
         })
 
     except:
@@ -179,10 +188,10 @@ for stock in stocks:
 df = pd.DataFrame(results)
 
 if df.empty:
-    st.warning("No high-quality trades")
+    st.warning("No trades found")
     st.stop()
 
-df = df.sort_values(by="Confidence %", ascending=False).head(3)
+df = df.sort_values(by=["Confidence %","WinRate"], ascending=False).head(3)
 
 st.dataframe(df)
 
@@ -195,32 +204,23 @@ BEST TRADE
 Entry: ₹{best['Entry']}
 Target: ₹{best['Target']}
 SL: ₹{best['StopLoss']}
+Qty: {best['Qty']}
 Confidence: {best['Confidence %']}%
 """)
 
 send_telegram_alert(best)
 
 save_trade(
-    best["Stock"],
-    best["Entry"],
-    best["Target"],
-    best["StopLoss"],
-    best["Change"],
-    best["Volume"],
-    50,
-    "Strong Breakout 🚀",
-    "Bullish"
+    best["Stock"], best["Entry"], best["Target"], best["StopLoss"],
+    0,0,50,"AUTO","Bullish"
 )
 
 # =========================
 # CHART
 # =========================
-st.subheader("📊 Candlestick Chart")
-
 chart = yf.download(best["Stock"], period="1d", interval="5m", progress=False)
 
 if not chart.empty:
-
     if isinstance(chart.columns, pd.MultiIndex):
         chart.columns = chart.columns.get_level_values(0)
 
@@ -240,12 +240,4 @@ if not chart.empty:
 
     fig.update_layout(template="plotly_dark", xaxis_rangeslider_visible=False)
 
-    st.plotly_chart(fig, use_container_width=True)
-
-# =========================
-# PERFORMANCE
-# =========================
-trades = update_trades()
-
-if not trades.empty:
-    st.dataframe(trades)
+    st.plotly_chart(fig)
