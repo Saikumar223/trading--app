@@ -15,18 +15,19 @@ def read_file():
         return df
     except:
         df = pd.DataFrame(columns=[
-            "Stock","Entry","Target","SL","Status","Exit","PnL"
-        ])
+    "Stock","Entry","Target","SL",
+    "Change","Volume","RSI","Type","MarketTrend",
+    "Status","Exit","PnL"
+])
         df.to_csv(FILE, index=False)
         return df
 
 # =========================
 # SAVE TRADE
 # =========================
-def save_trade(stock, entry, target, sl):
+def save_trade(stock, entry, target, sl, change, volume, rsi, entry_type, market_trend):
     df = read_file()
 
-    # avoid duplicate open trades
     if not ((df["Stock"] == stock) & (df["Status"] == "OPEN")).any():
 
         new_trade = pd.DataFrame([{
@@ -34,6 +35,11 @@ def save_trade(stock, entry, target, sl):
             "Entry": entry,
             "Target": target,
             "SL": sl,
+            "Change": change,
+            "Volume": volume,
+            "RSI": rsi,
+            "Type": entry_type,
+            "MarketTrend": market_trend,
             "Status": "OPEN",
             "Exit": 0,
             "PnL": 0
