@@ -1,10 +1,9 @@
 import yfinance as yf
-import pandas as pd
 import requests
 import os
 import json
 from datetime import datetime
-from ml_model import predict
+from ml_model import auto_train, predict
 from engine import stock_ranking
 
 TOKEN = os.getenv("TOKEN")
@@ -12,6 +11,12 @@ CHAT_ID = os.getenv("CHAT_ID")
 
 STATE_FILE = "trade_state.json"
 
+CAPITAL = 1000
+MAX_DAILY_LOSS = CAPITAL * 0.03  # 3%
+
+# =========================
+# TELEGRAM
+# =========================
 def send(msg):
     try:
         requests.post(
@@ -22,7 +27,7 @@ def send(msg):
         pass
 
 # =========================
-# STATE MANAGEMENT
+# STATE
 # =========================
 def load_state():
     if not os.path.exists(STATE_FILE):
@@ -37,9 +42,14 @@ def save_state(data):
 state = load_state()
 
 # =========================
-# TIME PHASE DETECTION
+# AUTO TRAIN ML DAILY
 # =========================
-hour = datetime.utcnow().hour  # UTC
+auto_train()
+
+# =========================
+# TIME PHASE
+# =========================
+hour = datetime.utcnow().hour
 
 if hour < 5:
     phase = "OPEN"
@@ -49,7 +59,7 @@ else:
     phase = "CLOSE"
 
 # =========================
-# COMMON FUNCTIONS
+# HELPERS
 # =========================
 def ema(series, span):
     return series.ewm(span=span).mean()
@@ -70,16 +80,29 @@ def higher_tf(stock):
         return False
 
     close = data["Close"]
-    if isinstance(close, pd.DataFrame):
+    if hasattr(close, "columns"):
         close = close.iloc[:, 0]
 
     return close.iloc[-1] > ema(close,20).iloc[-1] > ema(close,50).iloc[-1]
 
-stocks = ["RELIANCE.NS","TCS.NS","INFY.NS","HDFCBANK.NS","SBIN.NS"]
+def position_size(entry, sl):
+    risk_per_trade = CAPITAL * 0.02
+    risk_per_share = abs(entry - sl)
+
+    if risk_per_share == 0:
+        return 0
+
+    return int(risk_per_trade / risk_per_share)
+
+stocks = [
+    "RELIANCE.NS","TCS.NS","INFY.NS",
+    "HDFCBANK.NS","ICICIBANK.NS","SBIN.NS"
+]
+
 rankings = stock_ranking()
 
 # =========================
-# 🌅 MORNING LOGIC
+# 🌅 MORNING (PORTFOLIO BUILD)
 # =========================
 if phase == "OPEN":
 
@@ -95,12 +118,25 @@ if phase == "OPEN":
                 continue
 
             close = data["Close"]
-            if isinstance(close, pd.DataFrame):
+            volume = data["Volume"]
+
+            if hasattr(close, "columns"):
                 close = close.iloc[:, 0]
+                volume = volume.iloc[:, 0]
+
+            latest = float(close.iloc[-1])
+            old = float(close.iloc[-12])
+
+            change = ((latest-old)/old)*100
+            vol = float(volume.iloc[-1]) / float(volume.mean())
+            r = rsi(close).iloc[-1]
 
             support, resistance = sr(close)
 
-            score = rankings.get(stock, 0.5)
+            confidence = predict(change, vol, r, "AUTO", "Bullish")
+            winrate = rankings.get(stock, 0.5)
+
+            score = confidence + (winrate * 100)
 
             results.append((stock, resistance, support, score))
 
@@ -110,97 +146,122 @@ if phase == "OPEN":
     if not results:
         send("⚠️ No trades today")
     else:
-        best = sorted(results, key=lambda x: x[3], reverse=True)[0]
+        top = sorted(results, key=lambda x: x[3], reverse=True)[:3]
 
-        state["trade"] = {
-            "stock": best[0],
-            "entry": best[1],
-            "sl": best[2]
-        }
+        trades = []
+        msg = "🌅 MORNING PORTFOLIO\n\n"
+
+        for t in top:
+            qty = position_size(t[1], t[2])
+
+            if qty == 0:
+                continue
+
+            trades.append({
+                "stock": t[0],
+                "entry": t[1],
+                "sl": t[2],
+                "qty": qty
+            })
+
+            msg += f"{t[0]} → Buy ₹{round(t[1],2)} | SL ₹{round(t[2],2)} | Qty {qty}\n"
+
+        state["trades"] = trades
+        state["daily_loss"] = 0
 
         save_state(state)
 
-        send(f"""
-🌅 MORNING TRADE
-
-Stock: {best[0]}
-Buy above: ₹{round(best[1],2)}
-SL: ₹{round(best[2],2)}
-""")
+        send(msg)
 
 # =========================
-# 🌞 MIDDAY LOGIC
+# 🌞 MIDDAY (LIVE DECISIONS)
 # =========================
 elif phase == "MID":
 
-    trade = state.get("trade")
+    trades = state.get("trades", [])
+    daily_loss = state.get("daily_loss", 0)
 
-    if not trade:
-        send("⚠️ No active trade")
+    if not trades:
+        send("⚠️ No active trades")
         exit()
 
-    data = yf.download(trade["stock"], period="1d", interval="5m", progress=False)
+    msg = "🌞 MIDDAY UPDATE\n\n"
 
-    if data.empty:
-        exit()
+    for trade in trades:
+        try:
+            data = yf.download(trade["stock"], period="1d", interval="5m", progress=False)
+            if data.empty:
+                continue
 
-    close = data["Close"]
-    if isinstance(close, pd.DataFrame):
-        close = close.iloc[:, 0]
+            close = data["Close"]
+            if hasattr(close, "columns"):
+                close = close.iloc[:, 0]
 
-    price = float(close.iloc[-1])
+            price = float(close.iloc[-1])
 
-    if price > trade["entry"] * 1.01:
-        action = "HOLD ✅ (Strong)"
-    elif price < trade["entry"]:
-        action = "EXIT ❌ (Weak)"
-    else:
-        action = "WAIT ⏳"
+            pnl = (price - trade["entry"]) * trade["qty"]
 
-    send(f"""
-🌞 MIDDAY UPDATE
+            if pnl < 0:
+                daily_loss += abs(pnl)
 
-{trade['stock']}
-Current: ₹{round(price,2)}
+            if daily_loss >= MAX_DAILY_LOSS:
+                action = "STOP TRADING 🛑"
+            elif price > trade["entry"] * 1.01:
+                action = "HOLD ✅"
+            elif price < trade["entry"]:
+                action = "EXIT ❌"
+            else:
+                action = "WAIT ⏳"
 
-Action: {action}
-""")
+            msg += f"{trade['stock']} → ₹{round(price,2)} | PnL ₹{round(pnl,2)} → {action}\n"
+
+        except:
+            continue
+
+    state["daily_loss"] = daily_loss
+    save_state(state)
+
+    msg += f"\nTotal Loss Today: ₹{round(daily_loss,2)}"
+
+    send(msg)
 
 # =========================
-# 🌆 CLOSING LOGIC
+# 🌆 CLOSE (FINAL SUMMARY)
 # =========================
 else:
 
-    trade = state.get("trade")
+    trades = state.get("trades", [])
 
-    if not trade:
+    if not trades:
         send("📊 No trades today")
         exit()
 
-    data = yf.download(trade["stock"], period="1d", interval="5m", progress=False)
+    msg = "🌆 FINAL SUMMARY\n\n"
+    total_pnl = 0
 
-    if data.empty:
-        exit()
+    for trade in trades:
+        try:
+            data = yf.download(trade["stock"], period="1d", interval="5m", progress=False)
+            if data.empty:
+                continue
 
-    close = data["Close"]
-    if isinstance(close, pd.DataFrame):
-        close = close.iloc[:, 0]
+            close = data["Close"]
+            if hasattr(close, "columns"):
+                close = close.iloc[:, 0]
 
-    price = float(close.iloc[-1])
+            price = float(close.iloc[-1])
 
-    pnl = price - trade["entry"]
+            pnl = (price - trade["entry"]) * trade["qty"]
+            total_pnl += pnl
 
-    send(f"""
-🌆 MARKET CLOSE
+            msg += f"{trade['stock']} → PnL ₹{round(pnl,2)}\n"
 
-{trade['stock']}
-Close: ₹{round(price,2)}
+        except:
+            continue
 
-PnL: ₹{round(pnl,2)}
+    msg += f"\n💰 Total Portfolio PnL: ₹{round(total_pnl,2)}"
 
-Action:
-{"BOOK PROFIT ✅" if pnl > 0 else "STOPLOSS HIT ❌"}
-""")
+    send(msg)
 
     state.clear()
     save_state(state)
