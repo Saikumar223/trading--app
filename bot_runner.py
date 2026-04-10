@@ -23,15 +23,19 @@ MAX_CONSECUTIVE_LOSS = 2
 # TELEGRAM
 # =========================
 
-
 def send(msg):
     try:
-        requests.post(
+        res = requests.post(
             f"https://api.telegram.org/bot{TOKEN}/sendMessage",
-            data={"chat_id": CHAT_ID, "text": msg}
+            data={
+                "chat_id": CHAT_ID,
+                "text": msg
+            }
         )
-    except:
-        pass
+        print("STATUS CODE:", res.status_code)
+        print("RESPONSE:", res.text)
+    except Exception as e:
+        print("ERROR:", str(e))
 
 send("🚀 BOT STARTED SUCCESSFULLY")
 
