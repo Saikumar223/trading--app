@@ -222,10 +222,23 @@ save_trade(
 # =========================
 st.subheader("📊 Live Chart")
 
-chart = yf.download(best["Stock"], period="1d", interval="5m")
+chart = yf.download(best["Stock"], period="1d", interval="5m", progress=False)
 
 if not chart.empty:
-    fig = px.line(chart, y="Close", title=best["Stock"])
+
+    close_data = chart["Close"]
+
+    if isinstance(close_data, pd.DataFrame):
+        close_data = close_data.iloc[:, 0]
+
+    chart_df = close_data.reset_index()
+    chart_df.columns = ["Time", "Price"]
+
+    fig = px.line(chart_df, x="Time", y="Price", title=best["Stock"])
+
+    # ✅ ADD IT HERE
+    fig.update_layout(template="plotly_dark")
+
     st.plotly_chart(fig, use_container_width=True)
 
 # =========================
