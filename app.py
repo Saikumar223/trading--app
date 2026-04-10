@@ -14,15 +14,28 @@ if st.button("🔄 Refresh"):
     st.rerun()
 
 # =========================
-# MARKET STATUS
+# MARKET STATUS (SAFE)
 # =========================
 nifty = yf.download("^NSEI", period="1d", interval="5m", progress=False)
 
-close = nifty["Close"]
-if isinstance(close, pd.DataFrame):
-    close = close.iloc[:,0]
+if nifty is None or nifty.empty:
+    st.error("Market data not available")
+    st.stop()
 
-change = ((close.iloc[-1] - close.iloc[-12]) / close.iloc[-12]) * 100
+close = nifty["Close"]
+
+if isinstance(close, pd.DataFrame):
+    close = close.iloc[:, 0]
+
+# ✅ SAFETY CHECK (FIXES YOUR ERROR)
+if close is None or len(close) < 12:
+    st.warning("Not enough market data yet. Try after some time.")
+    st.stop()
+
+latest = float(close.iloc[-1])
+old = float(close.iloc[-12])
+
+change = ((latest - old) / old) * 100
 
 col1, col2, col3 = st.columns(3)
 
@@ -35,15 +48,8 @@ if change <= 0:
     st.stop()
 
 # =========================
-# STOCK SCAN
+# RSI FUNCTION
 # =========================
-stocks = [
-    "RELIANCE.NS","TCS.NS","INFY.NS","HDFCBANK.NS","ICICIBANK.NS",
-    "SBIN.NS","ITC.NS","LT.NS","AXISBANK.NS"
-]
-
-results = []
-
 def calculate_rsi(series, period=14):
     delta = series.diff()
     gain = delta.clip(lower=0).rolling(period).mean()
@@ -51,11 +57,28 @@ def calculate_rsi(series, period=14):
     rs = gain / loss
     return 100 - (100 / (1 + rs))
 
+# =========================
+# STOCK LIST
+# =========================
+stocks = [
+    "RELIANCE.NS","TCS.NS","INFY.NS","HDFCBANK.NS","ICICIBANK.NS",
+    "SBIN.NS","ITC.NS","LT.NS","AXISBANK.NS","KOTAKBANK.NS",
+    "BAJFINANCE.NS","BHARTIARTL.NS","ASIANPAINT.NS","MARUTI.NS",
+    "TITAN.NS","SUNPHARMA.NS","ONGC.NS","NTPC.NS","POWERGRID.NS",
+    "COALINDIA.NS","JSWSTEEL.NS","TATASTEEL.NS","WIPRO.NS",
+    "TECHM.NS","HCLTECH.NS","DRREDDY.NS","CIPLA.NS"
+]
+
+results = []
+
+# =========================
+# SCAN MARKET
+# =========================
 for stock in stocks:
     try:
         data = yf.download(stock, period="1d", interval="5m", progress=False)
 
-        if data.empty or len(data) < 20:
+        if data is None or data.empty or len(data) < 20:
             continue
 
         close = data["Close"][stock]
@@ -69,12 +92,11 @@ for stock in stocks:
 
         rsi = calculate_rsi(close).iloc[-1]
 
+        # ✅ STRONG FILTERS
         if price_change > 0.5 and vol_ratio > 1.5 and 40 < rsi < 70:
 
-            # ML prediction
             confidence = predict(price_change, vol_ratio, rsi)
 
-            # Entry logic
             recent_high = float(close.tail(10).max())
             recent_low = float(close.tail(10).min())
 
@@ -85,10 +107,10 @@ for stock in stocks:
                 entry_type = "Pullback 🔁"
                 entry = recent_low
 
-            target = round(entry * 1.015,2)
-            stoploss = round(entry * 0.992,2)
+            target = round(entry * 1.015, 2)
+            stoploss = round(entry * 0.992, 2)
 
-            score = price_change + vol_ratio + confidence/10
+            score = price_change + vol_ratio + (confidence / 10)
 
             results.append({
                 "Stock": stock,
@@ -104,24 +126,29 @@ for stock in stocks:
     except:
         continue
 
-df = pd.DataFrame(results).sort_values(by="Score", ascending=False).head(5)
+# =========================
+# DISPLAY RESULTS
+# =========================
+df = pd.DataFrame(results)
 
-# =========================
-# DISPLAY TRADES
-# =========================
+if df.empty:
+    st.warning("No high-quality trades found")
+    st.stop()
+
+df = df.sort_values(by="Score", ascending=False).head(5)
+
 st.subheader("📈 Top AI Trade Setups")
 st.dataframe(df)
 
 # =========================
-# BEST TRADE HIGHLIGHT
+# BEST TRADE
 # =========================
-if not df.empty:
-    best = df.iloc[0]
+best = df.iloc[0]
 
-    st.subheader("🏆 Best Trade")
+st.subheader("🏆 Best Trade")
 
-    st.success(
-        f"""
+st.success(
+    f"""
 Stock: {best['Stock']}
 
 Entry: ₹{best['Entry']}
@@ -131,28 +158,37 @@ StopLoss: ₹{best['StopLoss']}
 Confidence: {best['Confidence %']}%
 Type: {best['Type']}
 """
-    )
+)
 
 # =========================
-# PORTFOLIO
+# PORTFOLIO ALLOCATION
 # =========================
-st.subheader("💼 Portfolio")
+st.subheader("💼 Portfolio Allocation")
 
 capital = 1000
-risk = 0.02
+risk_per_trade = 0.02
 
-portfolio_data = []
+portfolio = []
 
 for i, row in df.iterrows():
-    risk_amt = capital * risk
-    qty = int(risk_amt / (row["Entry"] - row["StopLoss"]))
+    try:
+        risk_amt = capital * risk_per_trade
+        risk_per_share = abs(row["Entry"] - row["StopLoss"])
 
-    portfolio_data.append({
-        "Stock": row["Stock"],
-        "Qty": qty,
-        "Investment": round(qty * row["Entry"],2)
-    })
+        if risk_per_share == 0:
+            continue
 
-portfolio_df = pd.DataFrame(portfolio_data)
+        qty = int(risk_amt / risk_per_share)
+
+        portfolio.append({
+            "Stock": row["Stock"],
+            "Qty": qty,
+            "Investment": round(qty * row["Entry"], 2)
+        })
+
+    except:
+        continue
+
+portfolio_df = pd.DataFrame(portfolio)
 
 st.dataframe(portfolio_df)
