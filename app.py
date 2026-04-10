@@ -113,6 +113,9 @@ for stock in stocks:
             target = round(entry * 1.015, 2)
             stoploss = round(entry * 0.992, 2)
 
+            # =========================
+            # ML PREDICTION
+            # =========================
             confidence = predict(
                 price_change,
                 vol_ratio,
@@ -121,8 +124,16 @@ for stock in stocks:
                 "Bullish"
             )
 
-            if confidence < 60:
+            # =========================
+            # FIXED FILTER (IMPORTANT)
+            # =========================
+            if confidence != 50 and confidence < 60:
                 continue
+
+            # =========================
+            # DEBUG OUTPUT
+            # =========================
+            st.text(f"{stock} | Δ:{price_change:.2f}% | Vol:{vol_ratio:.2f}x | RSI:{rsi:.2f} | Conf:{confidence}%")
 
             score = price_change + vol_ratio + (confidence / 10)
 
@@ -150,9 +161,15 @@ if df.empty:
 
 df = df.sort_values(by="Score", ascending=False).head(5)
 
+# =========================
+# DISPLAY TRADES
+# =========================
 st.subheader("📈 Top AI Trade Setups")
 st.dataframe(df)
 
+# =========================
+# BEST TRADE
+# =========================
 best = df.iloc[0]
 
 st.subheader("🏆 Best Trade")
@@ -196,7 +213,7 @@ st.subheader("📈 PnL Trend")
 
 if not trades.empty:
     trades["Cumulative PnL"] = trades["PnL"].cumsum()
-    fig = px.line(trades, y="Cumulative PnL")
+    fig = px.line(trades, y="Cumulative PnL", title="Profit Curve")
     st.plotly_chart(fig)
 
 # =========================
