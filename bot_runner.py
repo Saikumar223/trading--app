@@ -20,8 +20,6 @@ MAX_CONSECUTIVE_LOSS = 2
 # TELEGRAM
 # =========================
 
-send("🚀 BOT STARTED SUCCESSFULLY")
-
 
 def send(msg):
     try:
@@ -31,6 +29,8 @@ def send(msg):
         )
     except:
         pass
+
+send("🚀 BOT STARTED SUCCESSFULLY")
 
 # =========================
 # STATE
