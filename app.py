@@ -32,4 +32,4 @@ if nifty is not None and not nifty.empty:
 
     st.write(f"📉 NIFTY Trend (1hr): {round(change,2)}%")
 
-    if change
+    if change:
