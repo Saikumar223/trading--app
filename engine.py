@@ -5,22 +5,26 @@ import os
 FILE = "trades.csv"
 
 # =========================
-# ENSURE FILE STRUCTURE
+# SAFE READ CSV
 # =========================
-def init_file():
-    if not os.path.exists(FILE) or os.stat(FILE).st_size == 0:
+def read_file():
+    try:
+        df = pd.read_csv(FILE)
+        if df.empty or len(df.columns) == 0:
+            raise ValueError("Empty file")
+        return df
+    except:
         df = pd.DataFrame(columns=[
             "Stock","Entry","Target","SL","Status","Exit","PnL"
         ])
         df.to_csv(FILE, index=False)
+        return df
 
 # =========================
 # SAVE TRADE
 # =========================
 def save_trade(stock, entry, target, sl):
-    init_file()
-
-    df = pd.read_csv(FILE)
+    df = read_file()
 
     # avoid duplicate open trades
     if not ((df["Stock"] == stock) & (df["Status"] == "OPEN")).any():
@@ -42,9 +46,7 @@ def save_trade(stock, entry, target, sl):
 # UPDATE TRADES
 # =========================
 def update_trades():
-    init_file()
-
-    df = pd.read_csv(FILE)
+    df = read_file()
 
     for i, row in df.iterrows():
         if row["Status"] == "OPEN":
