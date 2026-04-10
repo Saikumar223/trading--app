@@ -51,6 +51,7 @@ def update_trades():
                 if data.empty:
                     continue
 
+                # ✅ FIXED: handle both single & multi-column
                 close_data = data["Close"]
 
                 if isinstance(close_data, pd.DataFrame):
@@ -61,10 +62,12 @@ def update_trades():
                 if price >= row["Target"]:
                     df.at[i,"Status"]="WIN"
                     df.at[i,"PnL"]=price-row["Entry"]
+                    df.at[i,"Exit"]=price
 
                 elif price <= row["SL"]:
                     df.at[i,"Status"]="LOSS"
                     df.at[i,"PnL"]=price-row["Entry"]
+                    df.at[i,"Exit"]=price
 
             except:
                 continue
