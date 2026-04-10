@@ -3,10 +3,23 @@ import pandas as pd
 import yfinance as yf
 from ml_model import predict
 from engine import save_trade, update_trades, backtest
+import plotly.express as px
 
 st.set_page_config(layout="wide")
 
 st.title("📊 AI Trading Dashboard")
+
+st.markdown("""
+<style>
+body {
+    background-color: #0e1117;
+    color: white;
+}
+.stDataFrame {
+    background-color: #1c1f26;
+}
+</style>
+""", unsafe_allow_html=True)
 
 # =========================
 # REFRESH
@@ -138,8 +151,8 @@ df = df.sort_values(by="Score", ascending=False).head(5)
 # DISPLAY TRADES
 # =========================
 st.subheader("📈 Top AI Trade Setups")
-st.dataframe(df)
 
+st.dataframe(df.style.highlight_max(axis=0))
 # =========================
 # BEST TRADE
 # =========================
@@ -230,3 +243,12 @@ acc, count = backtest(best["Stock"])
 
 st.write(f"Backtest Accuracy: {acc}%")
 st.write(f"Trades Tested: {count}")
+
+st.subheader("📈 PnL Trend")
+
+if not trades.empty:
+    trades["Cumulative PnL"] = trades["PnL"].cumsum()
+
+    fig = px.line(trades, y="Cumulative PnL", title="Profit Curve")
+
+    st.plotly_chart(fig, use_container_width=True)
