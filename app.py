@@ -1,7 +1,7 @@
 import streamlit as st
 import pandas as pd
 import yfinance as yf
-import plotly.express as px
+import plotly.graph_objects as go
 import requests
 import hashlib
 from ml_model import predict
@@ -11,16 +11,10 @@ st.set_page_config(layout="wide")
 
 st.title("📊 AI Trading Dashboard")
 
-mode = st.selectbox("Select Mode", ["Intraday", "Swing"])
+mode = st.selectbox("Mode", ["Intraday", "Swing"])
 
 # =========================
-# REFRESH
-# =========================
-if st.button("🔄 Refresh"):
-    st.rerun()
-
-# =========================
-# TELEGRAM ALERT FUNCTION
+# TELEGRAM ALERT
 # =========================
 def send_telegram_alert(best):
     try:
@@ -43,7 +37,6 @@ def send_telegram_alert(best):
 Entry: ₹{best['Entry']}
 Target: ₹{best['Target']}
 SL: ₹{best['StopLoss']}
-
 Confidence: {best['Confidence %']}%
 """
 
@@ -53,13 +46,12 @@ Confidence: {best['Confidence %']}%
             )
 
             st.session_state.last_trade_id = trade_id
-            st.success("📩 Alert Sent")
 
     except:
         pass
 
 # =========================
-# MARKET STATUS
+# MARKET
 # =========================
 nifty = yf.download("^NSEI", period="1d", interval="5m", progress=False)
 
@@ -77,17 +69,14 @@ latest = float(close.iloc[-1])
 old = float(close.iloc[-12])
 change = ((latest - old) / old) * 100
 
-col1, col2, col3 = st.columns(3)
-col1.metric("NIFTY Trend", f"{round(change,2)}%")
-col2.metric("Market", "Bullish" if change > 0 else "Weak")
-col3.metric("Mode", mode)
+st.write(f"NIFTY Trend: {round(change,2)}%")
 
 if change <= 0:
-    st.warning("Market weak — avoid trading")
+    st.warning("Market weak")
     st.stop()
 
 # =========================
-# RSI + EMA
+# FUNCTIONS
 # =========================
 def calculate_rsi(series):
     delta = series.diff()
@@ -96,8 +85,8 @@ def calculate_rsi(series):
     rs = gain / loss
     return 100 - (100/(1+rs))
 
-def ema(series):
-    return series.ewm(span=20).mean()
+def ema(series, span):
+    return series.ewm(span=span).mean()
 
 stocks = [
     "RELIANCE.NS","TCS.NS","INFY.NS",
@@ -118,8 +107,12 @@ for stock in stocks:
         if data.empty or len(data) < 20:
             continue
 
-        close = data["Close"][stock]
-        volume = data["Volume"][stock]
+        close = data["Close"]
+        volume = data["Volume"]
+
+        if isinstance(close, pd.DataFrame):
+            close = close.iloc[:, 0]
+            volume = volume.iloc[:, 0]
 
         latest = float(close.iloc[-1])
         old = float(close.iloc[-12])
@@ -128,14 +121,35 @@ for stock in stocks:
         vol_ratio = float(volume.iloc[-1]) / float(volume.mean())
         rsi = calculate_rsi(close).iloc[-1]
 
-        if latest < ema(close).iloc[-1]:
+        # =========================
+        # 🔥 NEW: TREND CONFIRMATION
+        # =========================
+        ema20 = ema(close, 20).iloc[-1]
+        ema50 = ema(close, 50).iloc[-1]
+
+        if not (latest > ema20 > ema50):
             continue
 
-        if price_change < 0.7 or vol_ratio < 1.5 or not (40 < rsi < 70):
+        # =========================
+        # 🔥 NEW: RSI FILTER
+        # =========================
+        if rsi > 65:   # avoid overbought
             continue
 
-        entry = float(close.tail(10).max())
-        entry_type = "Breakout 🚀"
+        # =========================
+        # EXISTING FILTER
+        # =========================
+        if price_change < 0.7 or vol_ratio < 1.5 or rsi < 40:
+            continue
+
+        recent_high = float(close.tail(10).max())
+
+        # 🔥 avoid weak breakout
+        if latest < recent_high * 0.998:
+            continue
+
+        entry = recent_high
+        entry_type = "Strong Breakout 🚀"
 
         if mode == "Swing":
             target = entry * 1.03
@@ -144,15 +158,8 @@ for stock in stocks:
             target = entry * 1.015
             stoploss = entry * 0.992
 
-        confidence = predict(
-            price_change,
-            vol_ratio,
-            rsi,
-            entry_type,
-            "Bullish"
-        )
+        confidence = predict(price_change, vol_ratio, rsi, entry_type, "Bullish")
 
-        # smart filter
         if confidence != 50 and confidence < 60:
             continue
 
@@ -172,39 +179,27 @@ for stock in stocks:
 df = pd.DataFrame(results)
 
 if df.empty:
-    st.warning("No trades found")
+    st.warning("No high-quality trades")
     st.stop()
 
 df = df.sort_values(by="Confidence %", ascending=False).head(3)
 
-st.subheader("📈 Trade Setups")
 st.dataframe(df)
 
-# =========================
-# BEST TRADE
-# =========================
 best = df.iloc[0]
 
-st.subheader("🏆 Best Trade")
-
 st.success(f"""
-📌 {best['Stock']}
+BEST TRADE
 
+{best['Stock']}
 Entry: ₹{best['Entry']}
 Target: ₹{best['Target']}
-StopLoss: ₹{best['StopLoss']}
-
+SL: ₹{best['StopLoss']}
 Confidence: {best['Confidence %']}%
 """)
 
-# =========================
-# TELEGRAM AUTO ALERT
-# =========================
 send_telegram_alert(best)
 
-# =========================
-# SAVE TRADE
-# =========================
 save_trade(
     best["Stock"],
     best["Entry"],
@@ -213,58 +208,44 @@ save_trade(
     best["Change"],
     best["Volume"],
     50,
-    "Breakout 🚀",
+    "Strong Breakout 🚀",
     "Bullish"
 )
 
 # =========================
-# LIVE CHART
+# CHART
 # =========================
-st.subheader("📊 Live Chart")
+st.subheader("📊 Candlestick Chart")
 
 chart = yf.download(best["Stock"], period="1d", interval="5m", progress=False)
 
 if not chart.empty:
 
-    close_data = chart["Close"]
+    if isinstance(chart.columns, pd.MultiIndex):
+        chart.columns = chart.columns.get_level_values(0)
 
-    if isinstance(close_data, pd.DataFrame):
-        close_data = close_data.iloc[:, 0]
+    fig = go.Figure()
 
-    chart_df = close_data.reset_index()
-    chart_df.columns = ["Time", "Price"]
+    fig.add_trace(go.Candlestick(
+        x=chart.index,
+        open=chart["Open"],
+        high=chart["High"],
+        low=chart["Low"],
+        close=chart["Close"]
+    ))
 
-    fig = px.line(chart_df, x="Time", y="Price", title=best["Stock"])
+    fig.add_hline(y=best["Entry"], line_color="green")
+    fig.add_hline(y=best["Target"], line_color="blue")
+    fig.add_hline(y=best["StopLoss"], line_color="red")
 
-    # ✅ ADD IT HERE
-    fig.update_layout(template="plotly_dark")
+    fig.update_layout(template="plotly_dark", xaxis_rangeslider_visible=False)
 
     st.plotly_chart(fig, use_container_width=True)
 
 # =========================
 # PERFORMANCE
 # =========================
-st.subheader("📊 Performance")
-
 trades = update_trades()
 
 if not trades.empty:
     st.dataframe(trades)
-
-# =========================
-# PNL GRAPH
-# =========================
-st.subheader("📈 PnL Trend")
-
-if not trades.empty:
-    trades["Cumulative PnL"] = trades["PnL"].cumsum()
-    fig = px.line(trades, y="Cumulative PnL", title="Profit Curve")
-    st.plotly_chart(fig)
-
-# =========================
-# BACKTEST
-# =========================
-st.subheader("🧠 Backtest")
-
-acc, count = backtest(best["Stock"])
-st.write(f"Accuracy: {acc}% | Trades: {count}")
