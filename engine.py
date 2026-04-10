@@ -1,6 +1,8 @@
 import pandas as pd
 import yfinance as yf
 import os
+import requests
+import streamlit as st
 
 FILE = "trades.csv"
 
@@ -40,6 +42,34 @@ def save_trade(stock, entry, target, sl, change, volume, rsi, entry_type, market
     df = pd.concat([df, new], ignore_index=True)
     df.to_csv(FILE, index=False)
 
+# =========================
+# 🔔 TELEGRAM EXIT ALERT
+# =========================
+def send_exit_alert(stock, status, entry, exit_price, pnl):
+    try:
+        TOKEN = st.secrets["TOKEN"]
+        CHAT_ID = st.secrets["CHAT_ID"]
+
+        msg = f"""
+📊 TRADE CLOSED
+
+{stock}
+Status: {status}
+Entry: ₹{entry}
+Exit: ₹{exit_price}
+PnL: ₹{round(pnl,2)}
+"""
+
+        requests.post(
+            f"https://api.telegram.org/bot{TOKEN}/sendMessage",
+            data={"chat_id": CHAT_ID, "text": msg}
+        )
+    except:
+        pass
+
+# =========================
+# UPDATE TRADES
+# =========================
 def update_trades():
     df = read_file()
 
@@ -51,7 +81,6 @@ def update_trades():
                 if data.empty:
                     continue
 
-                # ✅ FIXED: handle both single & multi-column
                 close_data = data["Close"]
 
                 if isinstance(close_data, pd.DataFrame):
@@ -59,15 +88,33 @@ def update_trades():
 
                 price = float(close_data.iloc[-1])
 
+                # 🎯 TARGET HIT
                 if price >= row["Target"]:
                     df.at[i,"Status"]="WIN"
-                    df.at[i,"PnL"]=price-row["Entry"]
                     df.at[i,"Exit"]=price
+                    df.at[i,"PnL"]=price-row["Entry"]
 
+                    send_exit_alert(
+                        row["Stock"],
+                        "TARGET HIT 🎯",
+                        row["Entry"],
+                        price,
+                        price-row["Entry"]
+                    )
+
+                # 🛑 STOPLOSS HIT
                 elif price <= row["SL"]:
                     df.at[i,"Status"]="LOSS"
-                    df.at[i,"PnL"]=price-row["Entry"]
                     df.at[i,"Exit"]=price
+                    df.at[i,"PnL"]=price-row["Entry"]
+
+                    send_exit_alert(
+                        row["Stock"],
+                        "STOPLOSS HIT 🛑",
+                        row["Entry"],
+                        price,
+                        price-row["Entry"]
+                    )
 
             except:
                 continue
