@@ -64,7 +64,7 @@ def calculate_position(entry, sl, capital):
     return qty, qty * entry
 
 # =========================
-# MARKET
+# MARKET CHECK
 # =========================
 nifty = yf.download("^NSEI", period="1d", interval="5m", progress=False)
 
