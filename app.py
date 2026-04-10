@@ -7,19 +7,18 @@ st.set_page_config(page_title="Trading App", layout="wide")
 
 st.title("📊 Smart Trading App (₹1000 Strategy)")
 
-# 🔄 Refresh Button
+# Refresh
 if st.button("🔄 Refresh"):
     st.rerun()
 
 st.write("Running market analysis...\n")
 
 # =========================
-# 🔥 MARKET CHECK
+# MARKET CHECK
 # =========================
 nifty = yf.download("^NSEI", period="1d", interval="5m", progress=False)
 
 market_ok = False
-market_reason = ""
 
 if nifty is not None and not nifty.empty:
     close = nifty["Close"]
@@ -31,4 +30,6 @@ if nifty is not None and not nifty.empty:
 
     change = ((latest - old) / old) * 100
 
-    st.write(f"📉 NIFTY Trend (1hr):
+    st.write(f"📉 NIFTY Trend (1hr): {round(change,2)}%")
+
+    if change
