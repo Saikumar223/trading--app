@@ -2,27 +2,23 @@ import yfinance as yf
 import requests
 import os
 import json
-from datetime import datetime
+from datetime import datetime, timedelta
 from ml_model import auto_train, predict
 from engine import stock_ranking
 
 TOKEN = os.getenv("TOKEN")
 CHAT_ID = os.getenv("CHAT_ID")
 
-print("DEBUG TOKEN:", TOKEN)
-print("DEBUG CHAT_ID:", CHAT_ID)
-
 STATE_FILE = "trade_state.json"
 
 CAPITAL = 1000
-MAX_DAILY_LOSS = CAPITAL * 0.02   # 2%
+MAX_DAILY_LOSS = CAPITAL * 0.02
 MAX_TRADES = 3
 MAX_CONSECUTIVE_LOSS = 2
 
 # =========================
 # TELEGRAM
 # =========================
-
 def send(msg):
     try:
         res = requests.post(
@@ -32,12 +28,10 @@ def send(msg):
                 "text": msg
             }
         )
-        print("STATUS CODE:", res.status_code)
+        print("STATUS:", res.status_code)
         print("RESPONSE:", res.text)
     except Exception as e:
         print("ERROR:", str(e))
-
-send("🚀 BOT STARTED SUCCESSFULLY")
 
 # =========================
 # STATE
@@ -55,21 +49,30 @@ def save_state(data):
 state = load_state()
 
 # =========================
-# AUTO TRAIN ML
+# AUTO TRAIN
 # =========================
 auto_train()
 
 # =========================
-# TIME PHASE
+# IST TIME (FIXED)
 # =========================
-hour = datetime.utcnow().hour
+ist_time = datetime.utcnow() + timedelta(hours=5, minutes=30)
+hour = ist_time.hour
+minute = ist_time.minute
 
-if hour < 5:
+print("IST TIME:", ist_time)
+
+# =========================
+# PHASE LOGIC (IST BASED)
+# =========================
+if 9 <= hour < 11:
     phase = "OPEN"
-elif hour < 9:
+elif 11 <= hour < 14:
     phase = "MID"
 else:
     phase = "CLOSE"
+
+send(f"🚀 BOT RUNNING | IST: {hour}:{minute} | Phase: {phase}")
 
 # =========================
 # HELPERS
@@ -116,12 +119,11 @@ stocks = ["RELIANCE.NS","TCS.NS","INFY.NS","HDFCBANK.NS","SBIN.NS"]
 rankings = stock_ranking()
 
 # =========================
-# 🌅 MORNING
+# 🌅 OPEN PHASE
 # =========================
 if phase == "OPEN":
 
     trend, index_price = market_trend()
-
     results = []
 
     for stock in stocks:
@@ -147,7 +149,7 @@ if phase == "OPEN":
             ema20 = ema(close,20).iloc[-1]
             ema50 = ema(close,50).iloc[-1]
 
-            # 🔥 STRICT FILTERS
+            # FILTERS
             if not (latest > ema20 > ema50):
                 continue
             if vol_ratio < 1.3:
@@ -160,13 +162,12 @@ if phase == "OPEN":
                 continue
 
             support, resistance = sr(close)
-
             qty = position_size(resistance, support)
+
             if qty == 0:
                 continue
 
             score = confidence + (rankings.get(stock, 0.5) * 100)
-
             results.append((stock, resistance, support, qty, score))
 
         except:
@@ -199,30 +200,12 @@ if phase == "OPEN":
         save_state(state)
         send(msg)
 
-    # 🔥 OPTIONS SIGNAL (only strong trend)
-    if trend in ["BULLISH", "BEARISH"]:
-        strike = round(index_price / 100) * 100
-
-        option = f"NIFTY {strike} CE" if trend=="BULLISH" else f"NIFTY {strike} PE"
-
-        send(f"""
-🚀 OPTIONS TRADE
-
-Trend: {trend}
-Trade: {option}
-
-SL: 20%
-Target: 40%+
-""")
-
 # =========================
-# 🌞 MIDDAY
+# 🌞 MID PHASE
 # =========================
 elif phase == "MID":
 
     trades = state.get("trades", [])
-    daily_loss = state.get("daily_loss", 0)
-    consecutive_loss = state.get("consecutive_loss", 0)
 
     if not trades:
         send("⚠️ No trades running")
@@ -239,76 +222,24 @@ elif phase == "MID":
                 close = close.iloc[:, 0]
 
             price = close.iloc[-1]
-
             pnl = (price - trade["entry"]) * trade["qty"]
 
-            if pnl < 0:
-                daily_loss += abs(pnl)
-
-            # TSL
             if price > trade["entry"] * 1.01:
                 new_tsl = price * 0.995
                 if new_tsl > trade["tsl"]:
                     trade["tsl"] = new_tsl
 
-            if price < trade["tsl"]:
-                action = "EXIT 🔒"
-                if not trade["loss"]:
-                    consecutive_loss += 1
-                    trade["loss"] = True
-            else:
-                action = "HOLD"
+            action = "HOLD" if price > trade["tsl"] else "EXIT 🔒"
 
             msg += f"{trade['stock']} → ₹{round(price,2)} | PnL ₹{round(pnl,2)} → {action}\n"
 
         except:
             continue
 
-    state["daily_loss"] = daily_loss
-    state["consecutive_loss"] = consecutive_loss
-
-    save_state(state)
-
-    if daily_loss >= MAX_DAILY_LOSS or consecutive_loss >= MAX_CONSECUTIVE_LOSS:
-        send("🛑 STOP TRADING FOR TODAY")
-
     send(msg)
 
 # =========================
-# 🌆 CLOSE
+# 🌆 CLOSE PHASE
 # =========================
 else:
-
-    trades = state.get("trades", [])
-
-    if not trades:
-        send("📊 No trades today")
-        exit()
-
-    total_pnl = 0
-    msg = "🌆 FINAL REPORT\n\n"
-
-    for trade in trades:
-        try:
-            data = yf.download(trade["stock"], period="1d", interval="5m", progress=False)
-            close = data["Close"]
-
-            if hasattr(close, "columns"):
-                close = close.iloc[:, 0]
-
-            price = close.iloc[-1]
-
-            pnl = (price - trade["entry"]) * trade["qty"]
-            total_pnl += pnl
-
-            msg += f"{trade['stock']} → ₹{round(pnl,2)}\n"
-
-        except:
-            continue
-
-    msg += f"\n💰 TOTAL PnL: ₹{round(total_pnl,2)}"
-
-    send(msg)
-
-    state.clear()
-    save_state(state)
+    send("🌆 Market closed — no action")
