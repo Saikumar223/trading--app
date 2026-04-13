@@ -3,8 +3,7 @@ name: Trading Bot
 on:
   workflow_dispatch:
   schedule:
-    # 🔁 Run every 30 minutes during Indian market hours (9:00–16:00 IST)
-    - cron: "*/30 4-10 * * 1-5"
+    - cron: "0 * * * 1-5"   # runs every hour (reliable)
 
 jobs:
   run-bot:
@@ -22,7 +21,7 @@ jobs:
       - name: Install Dependencies
         run: pip install pandas yfinance scikit-learn requests
 
-      - name: Run Trading Bot
+      - name: Run Bot
         run: python bot_runner.py
         env:
           TOKEN: ${{ secrets.TOKEN }}
