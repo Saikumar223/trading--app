@@ -23,10 +23,7 @@ def send(msg):
     try:
         res = requests.post(
             f"https://api.telegram.org/bot{TOKEN}/sendMessage",
-            data={
-                "chat_id": CHAT_ID,
-                "text": msg
-            }
+            data={"chat_id": CHAT_ID, "text": msg}
         )
         print("STATUS:", res.status_code)
         print("RESPONSE:", res.text)
@@ -54,7 +51,7 @@ state = load_state()
 auto_train()
 
 # =========================
-# IST TIME (FIXED)
+# IST TIME
 # =========================
 ist_time = datetime.utcnow() + timedelta(hours=5, minutes=30)
 hour = ist_time.hour
@@ -63,14 +60,20 @@ minute = ist_time.minute
 print("IST TIME:", ist_time)
 
 # =========================
-# PHASE LOGIC (IST BASED)
+# 🔥 TIME WINDOW CONTROL (IMPORTANT FIX)
 # =========================
-if 9 <= hour < 11:
+def in_window(target_hour, window=10):
+    return hour == target_hour and minute <= window
+
+if in_window(9):
     phase = "OPEN"
-elif 11 <= hour < 14:
+elif in_window(13):
     phase = "MID"
-else:
+elif in_window(15):
     phase = "CLOSE"
+else:
+    print("⏭️ Not in execution window. Skipping run.")
+    exit()
 
 send(f"🚀 BOT RUNNING | IST: {hour}:{minute} | Phase: {phase}")
 
@@ -149,7 +152,6 @@ if phase == "OPEN":
             ema20 = ema(close,20).iloc[-1]
             ema50 = ema(close,50).iloc[-1]
 
-            # FILTERS
             if not (latest > ema20 > ema50):
                 continue
             if vol_ratio < 1.3:
