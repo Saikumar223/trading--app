@@ -3,17 +3,8 @@ name: Trading Bot
 on:
   workflow_dispatch:
   schedule:
-    # 🌅 MORNING (9:30 IST + backup)
-    - cron: "0 4 * * 1-5"
-    - cron: "5 4 * * 1-5"
-
-    # 🌞 MIDDAY (12:30 IST + backup)
-    - cron: "0 7 * * 1-5"
-    - cron: "5 7 * * 1-5"
-
-    # 🌆 CLOSE (3:30 IST + backup)
-    - cron: "0 10 * * 1-5"
-    - cron: "5 10 * * 1-5"
+    # 🔁 Run every 30 minutes during Indian market hours (9:00–16:00 IST)
+    - cron: "*/30 4-10 * * 1-5"
 
 jobs:
   run-bot:
