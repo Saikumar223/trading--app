@@ -3,24 +3,36 @@ name: Trading Bot
 on:
   workflow_dispatch:
   schedule:
-    - cron: "0 4 * * 1-5"    # 9:30 IST
-    - cron: "30 7 * * 1-5"   # 1:00 IST
-    - cron: "0 10 * * 1-5"   # 3:30 IST
+    # 🌅 MORNING (9:30 IST + backup)
+    - cron: "0 4 * * 1-5"
+    - cron: "5 4 * * 1-5"
+
+    # 🌞 MIDDAY (12:30 IST + backup)
+    - cron: "0 7 * * 1-5"
+    - cron: "5 7 * * 1-5"
+
+    # 🌆 CLOSE (3:30 IST + backup)
+    - cron: "0 10 * * 1-5"
+    - cron: "5 10 * * 1-5"
 
 jobs:
   run-bot:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout Code
+        uses: actions/checkout@v4
 
-      - uses: actions/setup-python@v5
+      - name: Setup Python
+        uses: actions/setup-python@v5
         with:
           python-version: "3.10"
 
-      - run: pip install pandas yfinance scikit-learn requests
+      - name: Install Dependencies
+        run: pip install pandas yfinance scikit-learn requests
 
-      - run: python bot_runner.py
+      - name: Run Trading Bot
+        run: python bot_runner.py
         env:
           TOKEN: ${{ secrets.TOKEN }}
           CHAT_ID: ${{ secrets.CHAT_ID }}
