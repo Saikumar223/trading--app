@@ -58,22 +58,22 @@ def performance_summary():
 
     if not os.path.exists(TRADES_FILE):
         return {
-            "total_trades": 0,
-            "wins": 0,
-            "losses": 0,
-            "accuracy": 0,
-            "total_pnl": 0
+            "PnL": 0,
+            "Wins": 0,
+            "Losses": 0,
+            "Accuracy": 0,
+            "Total Trades": 0
         }
 
     df = pd.read_csv(TRADES_FILE)
 
     if df.empty:
         return {
-            "total_trades": 0,
-            "wins": 0,
-            "losses": 0,
-            "accuracy": 0,
-            "total_pnl": 0
+            "PnL": 0,
+            "Wins": 0,
+            "Losses": 0,
+            "Accuracy": 0,
+            "Total Trades": 0
         }
 
     wins = len(df[df["Status"] == "WIN"])
@@ -84,9 +84,10 @@ def performance_summary():
     total_pnl = df["PnL"].sum()
 
     return {
-    "Total Trades": total,
-    "Wins": wins,
-    "Losses": losses,
-    "Accuracy": round(accuracy, 2),
-    "PnL": round(total_pnl, 2)
+        "PnL": round(total_pnl, 2),
+        "Wins": wins,
+        "Losses": losses,
+        "Accuracy": round(accuracy, 2),
+        "Total Trades": total
+    },
     }
