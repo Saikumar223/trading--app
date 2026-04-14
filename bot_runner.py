@@ -4,14 +4,27 @@ import os
 import json
 from datetime import datetime, timedelta
 from ml_model import auto_train, predict
-from engine import stock_ranking, log_trade
+from engine import stock_ranking, log_trade, update_capital
 
 TOKEN = os.getenv("TOKEN")
 CHAT_ID = os.getenv("CHAT_ID")
 
 STATE_FILE = "trade_state.json"
 
-CAPITAL = 1000
+# =========================
+# STATE
+# =========================
+def load_state():
+    if not os.path.exists(STATE_FILE):
+        return {}
+    return json.load(open(STATE_FILE))
+
+def save_state(data):
+    json.dump(data, open(STATE_FILE, "w"))
+
+state = load_state()
+
+CAPITAL = state.get("capital", 1000)
 MAX_DAILY_LOSS = CAPITAL * 0.02
 MAX_TRADES = 3
 MAX_CONSECUTIVE_LOSS = 2
@@ -27,19 +40,6 @@ def send(msg):
         )
     except:
         pass
-
-# =========================
-# STATE
-# =========================
-def load_state():
-    if not os.path.exists(STATE_FILE):
-        return {}
-    return json.load(open(STATE_FILE))
-
-def save_state(data):
-    json.dump(data, open(STATE_FILE, "w"))
-
-state = load_state()
 
 # =========================
 # AUTO TRAIN
@@ -82,18 +82,18 @@ def rsi(x):
 def sr(x): return float(x.tail(20).min()), float(x.tail(20).max())
 
 def qty(entry, sl):
-    risk = CAPITAL*0.02
-    r = abs(entry-sl)
-    return int(risk/r) if r else 0
+    risk = CAPITAL * 0.02
+    r = abs(entry - sl)
+    return int(risk / r) if r else 0
 
 def trend():
     d = yf.download("^NSEI", period="1d", interval="5m", progress=False)
     c = d["Close"]
-    if hasattr(c,"columns"): c = c.iloc[:,0]
+    if hasattr(c, "columns"): c = c.iloc[:,0]
     e20,e50 = ema(c,20).iloc[-1], ema(c,50).iloc[-1]
     p = c.iloc[-1]
-    if p>e20>e50: return "BULL"
-    if p<e20<e50: return "BEAR"
+    if p > e20 > e50: return "BULL"
+    if p < e20 < e50: return "BEAR"
     return "SIDE"
 
 stocks = ["RELIANCE.NS","TCS.NS","INFY.NS","HDFCBANK.NS","SBIN.NS"]
@@ -103,14 +103,14 @@ stocks = ["RELIANCE.NS","TCS.NS","INFY.NS","HDFCBANK.NS","SBIN.NS"]
 # =========================
 base_conf = 65
 if state.get("loss_streak",0) >= 2:
-    base_conf = 70
+    base_conf = 72
 elif state.get("daily_loss",0) < CAPITAL*0.01:
     base_conf = 60
 
 # =========================
 # OPEN
 # =========================
-if phase=="OPEN":
+if phase == "OPEN":
 
     if state.get("daily_loss",0) >= MAX_DAILY_LOSS:
         send("❌ Max loss hit")
@@ -121,12 +121,13 @@ if phase=="OPEN":
         exit()
 
     t = trend()
-    res = []
+    results = []
 
     for s in stocks:
         try:
             d = yf.download(s, period="1d", interval="5m", progress=False)
             c,v = d["Close"], d["Volume"]
+
             if hasattr(c,"columns"):
                 c,v = c.iloc[:,0], v.iloc[:,0]
 
@@ -139,43 +140,49 @@ if phase=="OPEN":
 
             e20,e50 = ema(c,20).iloc[-1], ema(c,50).iloc[-1]
 
-            if not(latest>e20>e50): continue
-            if vr<1.2: continue
-            if not(40<r<70): continue
+            if not(latest > e20 > e50): continue
+            if vr < 1.2: continue
+            if not(40 < r < 70): continue
 
-            conf = predict(change,vr,r,"AUTO",t)
+            conf = predict(change, vr, r, "AUTO", t)
             if conf < base_conf: continue
 
-            sup,_ = sr(c)
+            support,_ = sr(c)
             entry = latest
-            q = qty(entry,sup)
-            if q==0: continue
+            q = qty(entry, support)
 
-            tag = "🔥" if conf>75 else "⚡"
+            if q == 0: continue
 
-            res.append((s,entry,sup,q,conf,tag))
-            if len(res)>=MAX_TRADES: break
+            tag = "🔥" if conf > 75 else "⚡"
 
-        except: continue
+            results.append((s, entry, support, q, conf, tag))
 
-    if not res:
-        send("⚠️ No trades")
+            if len(results) >= MAX_TRADES:
+                break
+
+        except:
+            continue
+
+    if not results:
+        send("⚠️ No trades today")
     else:
         state["trades"] = []
-        msg="🌅 TRADES\n\n"
 
-        for r in res:
+        msg = "🌅 TRADES\n\n"
+
+        for r in results:
             state["trades"].append({
-                "stock":r[0],
-                "entry":r[1],
-                "sl":r[2],
-                "qty":r[3],
-                "status":"OPEN"
+                "stock": r[0],
+                "entry": r[1],
+                "sl": r[2],
+                "qty": r[3],
+                "status": "OPEN"
             })
+
             msg += f"{r[0]} {r[5]} ₹{round(r[1],2)} SL {round(r[2],2)} Q {r[3]}\n"
 
-        state["daily_loss"]=0
-        state["loss_streak"]=0
+        state["daily_loss"] = 0
+        state["loss_streak"] = 0
 
         save_state(state)
         send(msg)
@@ -183,33 +190,36 @@ if phase=="OPEN":
 # =========================
 # MID
 # =========================
-elif phase=="MID":
+elif phase == "MID":
 
-    trades = state.get("trades",[])
-    msg="🌞 UPDATE\n\n"
+    trades = state.get("trades", [])
+    msg = "🌞 UPDATE\n\n"
 
     for t in trades:
         try:
             d = yf.download(t["stock"], period="1d", interval="5m", progress=False)
             c = d["Close"]
-            if hasattr(c,"columns"): c=c.iloc[:,0]
+
+            if hasattr(c,"columns"):
+                c = c.iloc[:,0]
 
             price = c.iloc[-1]
-            pnl = (price-t["entry"])*t["qty"]
+            pnl = (price - t["entry"]) * t["qty"]
 
             if price <= t["sl"]:
-                t["status"]="LOSS"
+                t["status"] = "LOSS"
                 state["daily_loss"] += abs(pnl)
                 state["loss_streak"] += 1
                 log_trade(t["stock"], t["entry"], price, pnl)
 
-            elif price > t["entry"]*1.01:
-                t["sl"]=price*0.995
-                t["status"]="PROFIT"
+            elif price > t["entry"] * 1.01:
+                t["sl"] = price * 0.995
+                t["status"] = "PROFIT"
 
             msg += f"{t['stock']} ₹{round(price,2)} PnL {round(pnl,2)} {t['status']}\n"
 
-        except: continue
+        except:
+            continue
 
     save_state(state)
     send(msg)
@@ -219,24 +229,40 @@ elif phase=="MID":
 # =========================
 else:
 
-    trades = state.get("trades",[])
-    total=0
-    wins=0
+    trades = state.get("trades", [])
+    total = 0
+    wins = 0
 
     for t in trades:
         try:
             d = yf.download(t["stock"], period="1d", interval="5m", progress=False)
             c = d["Close"]
-            if hasattr(c,"columns"): c=c.iloc[:,0]
+
+            if hasattr(c,"columns"):
+                c = c.iloc[:,0]
 
             price = c.iloc[-1]
-            pnl = (price-t["entry"])*t["qty"]
+            pnl = (price - t["entry"]) * t["qty"]
 
-            total+=pnl
-            if pnl>0: wins+=1
+            total += pnl
+
+            if pnl > 0:
+                wins += 1
 
             log_trade(t["stock"], t["entry"], price, pnl)
 
-        except: continue
+        except:
+            continue
 
-    send(f"🌆 PnL ₹{round(total,2)} | Wins {wins}/{len(trades)}")
+    update_capital(total)
+
+    new_capital = CAPITAL + total
+    state["capital"] = new_capital
+    state["daily_loss"] = 0
+    state["loss_streak"] = 0
+
+    save_state(state)
+
+    accuracy = (wins / len(trades) * 100) if trades else 0
+
+    send(f"🌆 REPORT\n💰 Capital ₹{round(new_capital,2)}\nPnL ₹{round(total,2)}\nAccuracy {round(accuracy,2)}%")
