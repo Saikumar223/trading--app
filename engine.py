@@ -1,7 +1,8 @@
 import pandas as pd
 import os
 
-FILE = "trades.csv"
+TRADES_FILE = "trades.csv"
+CAPITAL_FILE = "capital.csv"
 
 def log_trade(stock, entry, exit_price, pnl):
 
@@ -15,24 +16,25 @@ def log_trade(stock, entry, exit_price, pnl):
         "Status": result
     }])
 
-    if not os.path.exists(FILE):
-        new.to_csv(FILE, index=False)
+    if not os.path.exists(TRADES_FILE):
+        new.to_csv(TRADES_FILE, index=False)
     else:
-        df = pd.read_csv(FILE)
+        df = pd.read_csv(TRADES_FILE)
         df = pd.concat([df, new], ignore_index=True)
-        df.to_csv(FILE, index=False)
+        df.to_csv(TRADES_FILE, index=False)
+
+def update_capital(pnl):
+
+    today = pd.Timestamp.today().date()
+
+    if not os.path.exists(CAPITAL_FILE):
+        df = pd.DataFrame([{"Date": today, "Capital": 1000 + pnl}])
+    else:
+        df = pd.read_csv(CAPITAL_FILE)
+        last_cap = df.iloc[-1]["Capital"]
+        df = pd.concat([df, pd.DataFrame([{"Date": today, "Capital": last_cap + pnl}])])
+
+    df.to_csv(CAPITAL_FILE, index=False)
 
 def stock_ranking():
-    if not os.path.exists(FILE):
-        return {}
-
-    df = pd.read_csv(FILE)
-    df = df[df["Status"].isin(["WIN","LOSS"])]
-
-    if df.empty:
-        return {}
-
-    summary = df.groupby("Stock")["Status"].value_counts().unstack().fillna(0)
-    summary["WinRate"] = summary.get("WIN",0)/summary.sum(axis=1)
-
-    return summary["WinRate"].to_dict()
+    return {}
