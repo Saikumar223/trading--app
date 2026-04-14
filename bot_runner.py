@@ -60,21 +60,19 @@ minute = ist_time.minute
 print("IST TIME:", ist_time)
 
 # =========================
-# 🔥 TIME WINDOW CONTROL (IMPORTANT FIX)
+# 🔥 SMART TIME WINDOWS (FIXED)
 # =========================
-def in_window(target_hour, window=10):
-    return hour == target_hour and minute <= window
-
-if in_window(9):
+if 9 <= hour < 12:
     phase = "OPEN"
-elif in_window(13):
+elif 12 <= hour < 14:
     phase = "MID"
-elif in_window(15):
+elif 14 <= hour < 16:
     phase = "CLOSE"
 else:
-    print("⏭️ Not in execution window. Skipping run.")
+    send(f"⏭️ Skipped → IST {hour}:{minute} (outside trading hours)")
     exit()
 
+# Always confirm run
 send(f"🚀 BOT RUNNING | IST: {hour}:{minute} | Phase: {phase}")
 
 # =========================
