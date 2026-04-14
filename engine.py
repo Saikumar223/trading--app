@@ -34,14 +34,20 @@ def update_capital(pnl):
     today = pd.Timestamp.today().date()
 
     if not os.path.exists(CAPITAL_FILE):
-        df = pd.DataFrame([{"Date": today, "Capital": 1000 + pnl}])
+        df = pd.DataFrame([{
+            "Date": today,
+            "Capital": 1000 + pnl
+        }])
     else:
         df = pd.read_csv(CAPITAL_FILE)
         last_cap = df.iloc[-1]["Capital"]
-        df = pd.concat([df, pd.DataFrame([{
+
+        new_row = pd.DataFrame([{
             "Date": today,
             "Capital": last_cap + pnl
-        }])])
+        }])
+
+        df = pd.concat([df, new_row], ignore_index=True)
 
     df.to_csv(CAPITAL_FILE, index=False)
 
@@ -52,7 +58,7 @@ def stock_ranking():
     return {}
 
 # =========================
-# 🔥 ADD THIS (FIX FOR STREAMLIT)
+# PERFORMANCE SUMMARY
 # =========================
 def performance_summary():
 
@@ -89,5 +95,4 @@ def performance_summary():
         "Losses": losses,
         "Accuracy": round(accuracy, 2),
         "Total Trades": total
-    },
     }
