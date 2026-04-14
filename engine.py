@@ -84,9 +84,9 @@ def performance_summary():
     total_pnl = df["PnL"].sum()
 
     return {
-        "total_trades": total,
-        "wins": wins,
-        "losses": losses,
-        "accuracy": round(accuracy, 2),
-        "total_pnl": round(total_pnl, 2)
+    "Total Trades": total,
+    "Wins": wins,
+    "Losses": losses,
+    "Accuracy": round(accuracy, 2),
+    "PnL": round(total_pnl, 2)
     }
