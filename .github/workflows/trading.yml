@@ -2,7 +2,9 @@ name: Trading Bot
 
 on:
   workflow_dispatch:
+
   schedule:
+    # Runs every hour (Monday to Friday)
     - cron: "0 * * * 1-5"
 
 jobs:
@@ -10,12 +12,24 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      # Checkout your repo
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      # Setup Python
+      - name: Setup Python
+        uses: actions/setup-python@v5
         with:
           python-version: "3.10"
-      - run: pip install pandas yfinance requests
-      - run: python bot_runner.py
+
+      # Install dependencies
+      - name: Install Dependencies
+        run: |
+          pip install pandas yfinance requests pytz
+
+      # Run bot
+      - name: Run Trading Bot
+        run: python bot_runner.py
         env:
           TOKEN: ${{ secrets.TOKEN }}
           CHAT_ID: ${{ secrets.CHAT_ID }}
