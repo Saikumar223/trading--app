@@ -2,7 +2,8 @@ import yfinance as yf
 import requests
 import os
 import json
-from datetime import datetime, timedelta
+from datetime import datetime
+import pytz
 from ml_model import auto_train, predict
 from engine import stock_ranking, log_trade, update_capital
 
@@ -47,10 +48,13 @@ def send(msg):
 auto_train()
 
 # =========================
-# TIME (IST)
+# IST TIME (FIXED)
 # =========================
-ist = datetime.utcnow() + timedelta(hours=5, minutes=30)
+ist = datetime.now(pytz.timezone("Asia/Kolkata"))
 hour = ist.hour
+minute = ist.minute
+
+print("IST TIME:", ist)
 
 # =========================
 # PHASE
@@ -65,7 +69,7 @@ else:
     send(f"⏭️ Skipped {hour}")
     exit()
 
-send(f"🚀 RUN | {hour} | {phase}")
+send(f"🚀 RUN | {hour}:{minute} | {phase}")
 
 # =========================
 # HELPERS
@@ -89,7 +93,7 @@ def qty(entry, sl):
 def trend():
     d = yf.download("^NSEI", period="1d", interval="5m", progress=False)
     c = d["Close"]
-    if hasattr(c, "columns"): c = c.iloc[:,0]
+    if hasattr(c,"columns"): c = c.iloc[:,0]
     e20,e50 = ema(c,20).iloc[-1], ema(c,50).iloc[-1]
     p = c.iloc[-1]
     if p > e20 > e50: return "BULL"
