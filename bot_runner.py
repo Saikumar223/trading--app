@@ -48,7 +48,7 @@ def send(msg):
 auto_train()
 
 # =========================
-# IST TIME (FIXED)
+# IST TIME
 # =========================
 ist = datetime.now(pytz.timezone("Asia/Kolkata"))
 hour = ist.hour
@@ -100,19 +100,28 @@ def trend():
     if p < e20 < e50: return "BEAR"
     return "SIDE"
 
+# 🔥 NEW EDGE FUNCTIONS
+def breakout(close):
+    recent_high = close.tail(10).max()
+    return close.iloc[-1] > recent_high * 0.999
+
+def momentum(close):
+    return close.iloc[-1] > close.iloc[-3]
+
 stocks = ["RELIANCE.NS","TCS.NS","INFY.NS","HDFCBANK.NS","SBIN.NS"]
 
 # =========================
 # DYNAMIC CONFIDENCE
 # =========================
-base_conf = 65
+base_conf = 60
+
 if state.get("loss_streak",0) >= 2:
-    base_conf = 72
-elif state.get("daily_loss",0) < CAPITAL*0.01:
-    base_conf = 60
+    base_conf = 70
+elif state.get("daily_loss",0) < CAPITAL * 0.01:
+    base_conf = 55
 
 # =========================
-# OPEN
+# OPEN PHASE
 # =========================
 if phase == "OPEN":
 
@@ -144,18 +153,35 @@ if phase == "OPEN":
 
             e20,e50 = ema(c,20).iloc[-1], ema(c,50).iloc[-1]
 
-            if not(latest > e20 > e50): continue
-            if vr < 1.2: continue
-            if not(40 < r < 70): continue
+            # TREND FILTER
+            if not(latest > e20 > e50):
+                continue
+
+            # 🔥 NEW EDGE FILTERS
+            if not breakout(c):
+                continue
+
+            if not momentum(c):
+                continue
+
+            # EXISTING FILTERS
+            if vr < 1.1:
+                continue
+
+            if not(35 < r < 75):
+                continue
 
             conf = predict(change, vr, r, "AUTO", t)
-            if conf < base_conf: continue
+
+            if conf < base_conf:
+                continue
 
             support,_ = sr(c)
             entry = latest
             q = qty(entry, support)
 
-            if q == 0: continue
+            if q == 0:
+                continue
 
             tag = "🔥" if conf > 75 else "⚡"
 
@@ -192,11 +218,16 @@ if phase == "OPEN":
         send(msg)
 
 # =========================
-# MID
+# MID PHASE
 # =========================
 elif phase == "MID":
 
     trades = state.get("trades", [])
+
+    if not trades:
+        send("⚠️ No active trades")
+        exit()
+
     msg = "🌞 UPDATE\n\n"
 
     for t in trades:
@@ -220,7 +251,7 @@ elif phase == "MID":
                 t["sl"] = price * 0.995
                 t["status"] = "PROFIT"
 
-            msg += f"{t['stock']} ₹{round(price,2)} PnL {round(pnl,2)} {t['status']}\n"
+            msg += f"{t['stock']} ₹{round(price,2)} | PnL ₹{round(pnl,2)} → {t['status']}\n"
 
         except:
             continue
@@ -229,11 +260,16 @@ elif phase == "MID":
     send(msg)
 
 # =========================
-# CLOSE
+# CLOSE PHASE
 # =========================
 else:
 
     trades = state.get("trades", [])
+
+    if not trades:
+        send("🌆 No trades executed today")
+        exit()
+
     total = 0
     wins = 0
 
