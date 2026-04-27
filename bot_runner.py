@@ -5,7 +5,7 @@ import json
 from datetime import datetime
 import pytz
 from ml_model import auto_train, predict
-from engine import stock_ranking, log_trade, update_capital
+from engine import log_trade, update_capital
 
 TOKEN = os.getenv("TOKEN")
 CHAT_ID = os.getenv("CHAT_ID")
@@ -54,7 +54,7 @@ ist = datetime.now(pytz.timezone("Asia/Kolkata"))
 hour = ist.hour
 minute = ist.minute
 
-print("IST TIME:", ist)
+print("IST:", ist)
 
 # =========================
 # PHASE
@@ -100,25 +100,24 @@ def trend():
     if p < e20 < e50: return "BEAR"
     return "SIDE"
 
-# 🔥 NEW EDGE FUNCTIONS
-def breakout(close):
-    recent_high = close.tail(10).max()
-    return close.iloc[-1] > recent_high * 0.999
+# =========================
+# EDGE FUNCTIONS (RELAXED)
+# =========================
+def breakout(c):
+    recent_high = c.tail(15).max()
+    return c.iloc[-1] >= recent_high * 0.995
 
-def momentum(close):
-    return close.iloc[-1] > close.iloc[-3]
+def momentum(c):
+    return c.iloc[-1] >= c.iloc[-5]
 
 stocks = ["RELIANCE.NS","TCS.NS","INFY.NS","HDFCBANK.NS","SBIN.NS"]
 
 # =========================
-# DYNAMIC CONFIDENCE
+# CONFIDENCE
 # =========================
 base_conf = 60
-
 if state.get("loss_streak",0) >= 2:
     base_conf = 70
-elif state.get("daily_loss",0) < CAPITAL * 0.01:
-    base_conf = 55
 
 # =========================
 # OPEN PHASE
@@ -139,8 +138,10 @@ if phase == "OPEN":
     for s in stocks:
         try:
             d = yf.download(s, period="1d", interval="5m", progress=False)
-            c,v = d["Close"], d["Volume"]
+            if d.empty:
+                continue
 
+            c,v = d["Close"], d["Volume"]
             if hasattr(c,"columns"):
                 c,v = c.iloc[:,0], v.iloc[:,0]
 
@@ -153,18 +154,18 @@ if phase == "OPEN":
 
             e20,e50 = ema(c,20).iloc[-1], ema(c,50).iloc[-1]
 
-            # TREND FILTER
+            # TREND
             if not(latest > e20 > e50):
                 continue
 
-            # 🔥 NEW EDGE FILTERS
+            # RELAXED EDGE
             if not breakout(c):
                 continue
 
             if not momentum(c):
                 continue
 
-            # EXISTING FILTERS
+            # BASIC FILTERS
             if vr < 1.1:
                 continue
 
@@ -177,15 +178,12 @@ if phase == "OPEN":
                 continue
 
             support,_ = sr(c)
-            entry = latest
-            q = qty(entry, support)
+            q = qty(latest, support)
 
             if q == 0:
                 continue
 
-            tag = "🔥" if conf > 75 else "⚡"
-
-            results.append((s, entry, support, q, conf, tag))
+            results.append((s, latest, support, q, conf))
 
             if len(results) >= MAX_TRADES:
                 break
@@ -193,11 +191,31 @@ if phase == "OPEN":
         except:
             continue
 
+    # 🔥 FALLBACK (CRITICAL FIX)
+    if not results:
+        for s in stocks:
+            try:
+                d = yf.download(s, period="1d", interval="5m", progress=False)
+                c = d["Close"]
+                if hasattr(c,"columns"): c = c.iloc[:,0]
+
+                latest = c.iloc[-1]
+                e20 = ema(c,20).iloc[-1]
+
+                if latest > e20:
+                    support,_ = sr(c)
+                    q = qty(latest, support)
+
+                    if q > 0:
+                        results.append((s, latest, support, q, 50))
+                        break
+            except:
+                continue
+
     if not results:
         send("⚠️ No trades today")
     else:
         state["trades"] = []
-
         msg = "🌅 TRADES\n\n"
 
         for r in results:
@@ -209,7 +227,7 @@ if phase == "OPEN":
                 "status": "OPEN"
             })
 
-            msg += f"{r[0]} {r[5]} ₹{round(r[1],2)} SL {round(r[2],2)} Q {r[3]}\n"
+            msg += f"{r[0]} ₹{round(r[1],2)} SL {round(r[2],2)} Q {r[3]}\n"
 
         state["daily_loss"] = 0
         state["loss_streak"] = 0
@@ -218,7 +236,7 @@ if phase == "OPEN":
         send(msg)
 
 # =========================
-# MID PHASE
+# MID
 # =========================
 elif phase == "MID":
 
@@ -234,9 +252,7 @@ elif phase == "MID":
         try:
             d = yf.download(t["stock"], period="1d", interval="5m", progress=False)
             c = d["Close"]
-
-            if hasattr(c,"columns"):
-                c = c.iloc[:,0]
+            if hasattr(c,"columns"): c = c.iloc[:,0]
 
             price = c.iloc[-1]
             pnl = (price - t["entry"]) * t["qty"]
@@ -260,7 +276,7 @@ elif phase == "MID":
     send(msg)
 
 # =========================
-# CLOSE PHASE
+# CLOSE
 # =========================
 else:
 
@@ -277,15 +293,12 @@ else:
         try:
             d = yf.download(t["stock"], period="1d", interval="5m", progress=False)
             c = d["Close"]
-
-            if hasattr(c,"columns"):
-                c = c.iloc[:,0]
+            if hasattr(c,"columns"): c = c.iloc[:,0]
 
             price = c.iloc[-1]
             pnl = (price - t["entry"]) * t["qty"]
 
             total += pnl
-
             if pnl > 0:
                 wins += 1
 
@@ -303,6 +316,6 @@ else:
 
     save_state(state)
 
-    accuracy = (wins / len(trades) * 100) if trades else 0
+    acc = (wins / len(trades) * 100) if trades else 0
 
-    send(f"🌆 REPORT\n💰 Capital ₹{round(new_capital,2)}\nPnL ₹{round(total,2)}\nAccuracy {round(accuracy,2)}%")
+    send(f"🌆 REPORT\n💰 Capital ₹{round(new_capital,2)}\nPnL ₹{round(total,2)}\nAccuracy {round(acc,2)}%")
