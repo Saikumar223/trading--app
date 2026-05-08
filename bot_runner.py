@@ -6,32 +6,29 @@ import pytz
 
 from ml_model import auto_train, predict
 
-from trade_manager import (
-    load_state,
-    save_state,
+from database import (
+    init_db,
+    get_capital,
+    update_capital,
+    session_done,
+    mark_session,
     add_trade,
     get_active_trades,
-    update_trade,
+    update_sl,
     close_trade
 )
 
-TOKEN = os.getenv("TOKEN")
-CHAT_ID = os.getenv("CHAT_ID")
-
 # =========================
-# LOAD STATE
+# INIT DB
 # =========================
-state = load_state()
-
-CAPITAL = state.get("capital", 1000)
-
-MAX_DAILY_LOSS = CAPITAL * 0.02
-MAX_TRADES = 3
-MAX_CONSECUTIVE_LOSS = 2
+init_db()
 
 # =========================
 # TELEGRAM
 # =========================
+TOKEN = os.getenv("TOKEN")
+CHAT_ID = os.getenv("CHAT_ID")
+
 def send(msg):
 
     try:
@@ -48,7 +45,7 @@ def send(msg):
         pass
 
 # =========================
-# AUTO TRAIN
+# TRAIN MODEL
 # =========================
 auto_train()
 
@@ -62,30 +59,57 @@ ist = datetime.now(
 hour = ist.hour
 minute = ist.minute
 
+today = ist.strftime("%Y-%m-%d")
+
 print("IST:", ist)
 
 # =========================
-# PHASE
+# PHASE DETECTION
 # =========================
 if 9 <= hour < 12:
+
     phase = "OPEN"
 
 elif 12 <= hour < 14:
+
     phase = "MID"
 
 elif 14 <= hour < 16:
+
     phase = "CLOSE"
 
 else:
+
     send(f"⏭️ Skipped {hour}")
+
     exit()
 
+# =========================
+# SINGLE EXECUTION/DAY
+# =========================
+if session_done(today, phase):
+
+    send(f"⏭️ {phase} already executed")
+
+    exit()
+
+mark_session(today, phase)
+
 send(f"🚀 RUN | {hour}:{minute} | {phase}")
+
+# =========================
+# CAPITAL
+# =========================
+CAPITAL = get_capital()
+
+MAX_DAILY_LOSS = CAPITAL * 0.02
+MAX_TRADES = 3
 
 # =========================
 # HELPERS
 # =========================
 def ema(x, n):
+
     return x.ewm(span=n).mean()
 
 def rsi(x):
@@ -127,6 +151,7 @@ def trend():
     c = d["Close"]
 
     if hasattr(c, "columns"):
+
         c = c.iloc[:, 0]
 
     e20 = ema(c, 20).iloc[-1]
@@ -135,15 +160,17 @@ def trend():
     p = c.iloc[-1]
 
     if p > e20 > e50:
+
         return "BULL"
 
     if p < e20 < e50:
+
         return "BEAR"
 
     return "SIDE"
 
 # =========================
-# EDGE FUNCTIONS
+# EDGE LOGIC
 # =========================
 def breakout(c):
 
@@ -155,6 +182,9 @@ def momentum(c):
 
     return c.iloc[-1] >= c.iloc[-5]
 
+# =========================
+# WATCHLIST
+# =========================
 stocks = [
     "RELIANCE.NS",
     "TCS.NS",
@@ -164,25 +194,9 @@ stocks = [
 ]
 
 # =========================
-# CONFIDENCE
-# =========================
-base_conf = 60
-
-if state.get("loss_streak", 0) >= 2:
-    base_conf = 70
-
-# =========================
 # OPEN
 # =========================
 if phase == "OPEN":
-
-    if state.get("daily_loss", 0) >= MAX_DAILY_LOSS:
-        send("❌ Max loss hit")
-        exit()
-
-    if state.get("loss_streak", 0) >= MAX_CONSECUTIVE_LOSS:
-        send("❌ Loss streak stop")
-        exit()
 
     t = trend()
 
@@ -206,10 +220,12 @@ if phase == "OPEN":
             v = d["Volume"]
 
             if hasattr(c, "columns"):
+
                 c = c.iloc[:, 0]
                 v = v.iloc[:, 0]
 
             latest = c.iloc[-1]
+
             old = c.iloc[-12]
 
             change = (
@@ -227,20 +243,23 @@ if phase == "OPEN":
             if not (latest > e20 > e50):
                 continue
 
-            # EDGE
+            # BREAKOUT
             if not breakout(c):
                 continue
 
+            # MOMENTUM
             if not momentum(c):
                 continue
 
-            # FILTERS
+            # VOLUME
             if vr < 1.1:
                 continue
 
+            # RSI
             if not (35 < r < 75):
                 continue
 
+            # ML CONFIDENCE
             conf = predict(
                 change,
                 vr,
@@ -249,14 +268,14 @@ if phase == "OPEN":
                 t
             )
 
-            if conf < base_conf:
+            if conf < 60:
                 continue
 
             support, _ = sr(c)
 
             q = qty(latest, support)
 
-            if q == 0:
+            if q <= 0:
                 continue
 
             results.append(
@@ -291,6 +310,7 @@ if phase == "OPEN":
                 c = d["Close"]
 
                 if hasattr(c, "columns"):
+
                     c = c.iloc[:, 0]
 
                 latest = c.iloc[-1]
@@ -355,6 +375,7 @@ elif phase == "MID":
     if not trades:
 
         send("⚠️ No active trades")
+
         exit()
 
     msg = "🌞 UPDATE\n\n"
@@ -373,6 +394,7 @@ elif phase == "MID":
             c = d["Close"]
 
             if hasattr(c, "columns"):
+
                 c = c.iloc[:, 0]
 
             price = c.iloc[-1]
@@ -384,7 +406,7 @@ elif phase == "MID":
 
             status = "HOLD"
 
-            # SL HIT
+            # STOP LOSS
             if price <= t["sl"]:
 
                 close_trade(
@@ -394,7 +416,7 @@ elif phase == "MID":
 
                 status = "SL HIT ❌"
 
-            # TARGET HIT
+            # TARGET
             elif price >= t["target"]:
 
                 close_trade(
@@ -404,7 +426,7 @@ elif phase == "MID":
 
                 status = "TARGET 🎯"
 
-            # TRAILING SL
+            # TRAILING
             elif price > t["entry"] * 1.01:
 
                 new_sl = round(
@@ -412,11 +434,9 @@ elif phase == "MID":
                     2
                 )
 
-                update_trade(
+                update_sl(
                     t["stock"],
-                    {
-                        "sl": new_sl
-                    }
+                    new_sl
                 )
 
                 status = "TRAILING 🔥"
@@ -442,7 +462,8 @@ else:
 
     if not trades:
 
-        send("🌆 No trades executed today")
+        send("🌆 No active trades to close")
+
         exit()
 
     total = 0
@@ -462,13 +483,14 @@ else:
             c = d["Close"]
 
             if hasattr(c, "columns"):
+
                 c = c.iloc[:, 0]
 
             price = c.iloc[-1]
 
-            pnl = (
-                (price - t["entry"])
-                * t["qty"]
+            pnl = close_trade(
+                t["stock"],
+                price
             )
 
             total += pnl
@@ -476,19 +498,12 @@ else:
             if pnl > 0:
                 wins += 1
 
-            close_trade(
-                t["stock"],
-                price
-            )
-
         except:
             continue
 
-    state = load_state()
+    capital = get_capital()
 
-    capital = state.get("capital", 1000)
-
-    acc = (
+    accuracy = (
         (wins / len(trades)) * 100
     ) if trades else 0
 
@@ -496,5 +511,5 @@ else:
         f"🌆 REPORT\n"
         f"💰 Capital ₹{round(capital,2)}\n"
         f"PnL ₹{round(total,2)}\n"
-        f"Accuracy {round(acc,2)}%"
+        f"Accuracy {round(accuracy,2)}%"
     )
