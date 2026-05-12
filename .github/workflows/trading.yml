@@ -1,35 +1,61 @@
 name: Trading Bot
 
 on:
-  workflow_dispatch:
-
   schedule:
-    # Runs every hour (Monday to Friday)
-    - cron: "0 * * * 1-5"
+    # Runs once every hour at minute 0 (UTC).
+    # This is fine because your bot itself converts to IST and decides:
+    # - OPEN  : 09:00–11:59 IST
+    # - MID   : 12:00–13:59 IST
+    # - CLOSE : 14:00–15:59 IST
+    - cron: '0 * * * *'
+
+  # Allows you to trigger manually from the GitHub Actions UI
+  workflow_dispatch:
 
 jobs:
   run-bot:
     runs-on: ubuntu-latest
 
-    steps:
-      # Checkout your repo
-      - name: Checkout Code
-        uses: actions/checkout@v4
+    # Required so GitHub Actions can commit and push trading.db back to the repo
+    permissions:
+      contents: write
 
-      # Setup Python
-      - name: Setup Python
+    steps:
+      # Checkout latest repository contents
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: true
+
+      # Set up Python
+      - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.10"
+          python-version: '3.11'
 
-      # Install dependencies
-      - name: Install Dependencies
+      # Install required packages
+      - name: Install dependencies
         run: |
-          pip install pandas yfinance requests pytz
+          pip install pandas yfinance numpy scikit-learn requests pytz
 
-      # Run bot
-      - name: Run Trading Bot
-        run: python bot_runner.py
+      # Run the trading bot
+      - name: Run trading bot
         env:
           TOKEN: ${{ secrets.TOKEN }}
           CHAT_ID: ${{ secrets.CHAT_ID }}
+        run: python bot_runner.py
+
+      # Persist SQLite database across runs
+      - name: Commit database changes
+        run: |
+          git config --global user.name "github-actions"
+          git config --global user.email "actions@github.com"
+
+          # Add the SQLite database if it was created or modified
+          git add trading.db
+
+          # Commit only if there are changes
+          git commit -m "Update trading database" || echo "No changes to commit"
+
+          # Push changes back to the main branch
+          git push
