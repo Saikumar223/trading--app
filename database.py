@@ -7,35 +7,28 @@ DB = "trading.db"
 # CONNECT
 # =========================
 def connect():
-
     return sqlite3.connect(DB)
 
 # =========================
 # INIT DB
 # =========================
 def init_db():
-
     conn = connect()
-
     cur = conn.cursor()
 
-    # TRADES
+    # TRADES TABLE (Updated with target_min and target_max)
     cur.execute("""
     CREATE TABLE IF NOT EXISTS trades (
-
         id INTEGER PRIMARY KEY AUTOINCREMENT,
-
         stock TEXT,
         entry REAL,
         sl REAL,
-        target REAL,
+        target_min REAL,
+        target_max REAL,
         qty INTEGER,
-
         status TEXT,
-
         entry_time TEXT,
         exit_time TEXT,
-
         exit_price REAL,
         pnl REAL
     )
@@ -44,7 +37,6 @@ def init_db():
     # SESSIONS
     cur.execute("""
     CREATE TABLE IF NOT EXISTS sessions (
-
         day TEXT,
         phase TEXT
     )
@@ -53,7 +45,6 @@ def init_db():
     # CAPITAL
     cur.execute("""
     CREATE TABLE IF NOT EXISTS capital (
-
         amount REAL
     )
     """)
@@ -62,59 +53,36 @@ def init_db():
 
     # INITIAL CAPITAL
     cur.execute("SELECT * FROM capital")
-
     if not cur.fetchone():
-
-        cur.execute(
-            "INSERT INTO capital VALUES (?)",
-            (1000,)
-        )
+        cur.execute("INSERT INTO capital VALUES (?)", (1000,))
 
     conn.commit()
-
     conn.close()
 
 # =========================
 # CAPITAL
 # =========================
 def get_capital():
-
     conn = connect()
-
     cur = conn.cursor()
-
     cur.execute("SELECT amount FROM capital")
-
     capital = cur.fetchone()[0]
-
     conn.close()
-
     return capital
 
 def update_capital(new_amount):
-
     conn = connect()
-
     cur = conn.cursor()
-
-    cur.execute(
-        "UPDATE capital SET amount=?",
-        (new_amount,)
-    )
-
+    cur.execute("UPDATE capital SET amount=?", (new_amount,))
     conn.commit()
-
     conn.close()
 
 # =========================
 # SESSION CONTROL
 # =========================
 def session_done(day, phase):
-
     conn = connect()
-
     cur = conn.cursor()
-
     cur.execute(
         """
         SELECT * FROM sessions
@@ -122,19 +90,13 @@ def session_done(day, phase):
         """,
         (day, phase)
     )
-
     result = cur.fetchone()
-
     conn.close()
-
     return result is not None
 
 def mark_session(day, phase):
-
     conn = connect()
-
     cur = conn.cursor()
-
     cur.execute(
         """
         INSERT INTO sessions
@@ -142,136 +104,104 @@ def mark_session(day, phase):
         """,
         (day, phase)
     )
-
     conn.commit()
-
     conn.close()
 
 # =========================
-# TRADES
+# TRADES MANAGEMENT
 # =========================
 def add_trade(stock, entry, sl, qty):
-
     conn = connect()
-
     cur = conn.cursor()
 
-    risk = abs(entry - sl)
-
-    target = entry + (risk * 2)
+    # Calculate explicit 6% and 10% targets for the database record
+    target_min = entry * 1.06
+    target_max = entry * 1.10
 
     cur.execute("""
     INSERT INTO trades (
-
         stock,
         entry,
         sl,
-        target,
+        target_min,
+        target_max,
         qty,
-
         status,
-
         entry_time,
-
         exit_time,
         exit_price,
         pnl
-
     )
-
-    VALUES (?,?,?,?,?,?,?,?,?,?)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?)
     """,
-
     (
         stock,
-        round(entry,2),
-        round(sl,2),
-        round(target,2),
+        round(entry, 2),
+        round(sl, 2),
+        round(target_min, 2),
+        round(target_max, 2),
         qty,
-
         "OPEN",
-
         str(datetime.now()),
-
         None,
         None,
         0
     ))
 
     conn.commit()
-
     conn.close()
 
-# =========================
-# ACTIVE TRADES
-# =========================
 def get_active_trades():
-
     conn = connect()
-
     cur = conn.cursor()
 
+    # Select both target boundaries
     cur.execute("""
     SELECT
     stock,
     entry,
     sl,
-    target,
+    target_min,
+    target_max,
     qty
     FROM trades
     WHERE status='OPEN'
     """)
 
     rows = cur.fetchall()
-
     conn.close()
 
     trades = []
-
     for r in rows:
-
         trades.append({
             "stock": r[0],
             "entry": r[1],
             "sl": r[2],
-            "target": r[3],
-            "qty": r[4]
+            "target_min": r[3],
+            "target_max": r[4],
+            "qty": r[5]
         })
 
     return trades
 
-# =========================
-# UPDATE SL
-# =========================
 def update_sl(stock, sl):
-
     conn = connect()
-
     cur = conn.cursor()
-
     cur.execute("""
     UPDATE trades
     SET sl=?
     WHERE stock=?
     AND status='OPEN'
     """,
-
     (
-        round(sl,2),
+        round(sl, 2),
         stock
     ))
-
     conn.commit()
-
     conn.close()
 
-# =========================
-# CLOSE TRADE
-# =========================
 def close_trade(stock, price):
-
     conn = connect()
-
     cur = conn.cursor()
 
     cur.execute("""
@@ -282,12 +212,10 @@ def close_trade(stock, price):
     WHERE stock=?
     AND status='OPEN'
     """,
-
     (stock,)
     )
 
     row = cur.fetchone()
-
     if not row:
         conn.close()
         return 0
@@ -295,33 +223,26 @@ def close_trade(stock, price):
     entry = row[0]
     qty = row[1]
 
-    pnl = (
-        (price - entry)
-        * qty
-    )
+    pnl = (price - entry) * qty
 
     cur.execute("""
     UPDATE trades
-
     SET
     status='CLOSED',
     exit_price=?,
     exit_time=?,
     pnl=?
-
     WHERE stock=?
     AND status='OPEN'
     """,
-
     (
-        round(price,2),
+        round(price, 2),
         str(datetime.now()),
-        round(pnl,2),
+        round(pnl, 2),
         stock
     ))
 
     conn.commit()
-
     conn.close()
 
     return pnl
